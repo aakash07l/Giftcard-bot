@@ -440,10 +440,9 @@ async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TY
     elif method == "cookie":
         await query.edit_message_text(
             text=(
-                f"🍪 <b>Paste Session JSON / Cookies — {plat_name}</b>\n\n"
-                f"Export cookies or storage state from your desktop browser for <code>{config.PLATFORMS.get(platform, {}).get('url')}</code> "
-                f"and paste the JSON here:\n\n"
-                f"<i>(Format: [{{'name': '...', 'value': '...'}}] or Playwright storage state dict)</i>"
+                f"🍪 <b>Paste Bearer Token or Cookies — {plat_name}</b>\n\n"
+                f"Aap apna <b>Bearer Token</b> (e.g. <code>eyJhbGci...</code>) ya cookies JSON yahan chat me paste karein:\n\n"
+                f"<i>Bot turant isse session me save kar lega!</i>"
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
@@ -510,7 +509,9 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
                 )
             else:
                 await update.message.reply_text(
-                    f"❌ Login failed or timed out on {platform.title()}. Please try again with <code>/login</code>.",
+                    f"❌ <b>Login failed or timed out on {platform.title()}.</b>\n\n"
+                    f"💡 <i>Tip:</i> Cloud servers par Rooter/Blinkit anti-bot security OTP block kar sakti hai.\n"
+                    f"Aap seedha <code>/login</code> me jakar <b>Paste Bearer Token</b> option se apna auth token paste kar sakte hain!",
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
@@ -542,7 +543,7 @@ async def handle_otp_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives raw JSON cookies/tokens and imports them."""
+    """Receives raw Bearer token or JSON cookies and imports them."""
     user_id = update.effective_user.id
     cookie_text = update.message.text.strip()
     platform = context.user_data.get("login_platform", "blinkit")
@@ -550,14 +551,14 @@ async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_T
     success = browser_manager.import_session_json(user_id, platform, cookie_text)
     if success:
         await update.message.reply_text(
-            f"✅ <b>Cookies successfully imported for {platform.title()}!</b>\n"
+            f"✅ <b>Authentication token successfully saved for {platform.title()}!</b>\n"
             f"You can now trigger automated purchases with <code>/buy</code>.",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
-            "❌ Invalid JSON format. Please ensure you paste a valid cookies array or Playwright storage state dict.",
+            "❌ Invalid token or JSON format. Please ensure you paste a valid Bearer token string or cookies JSON.",
             reply_markup=get_main_menu_keyboard(),
         )
     return ConversationHandler.END

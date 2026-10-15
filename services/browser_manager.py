@@ -133,12 +133,42 @@ class BrowserManager:
         await context.storage_state(path=str(session_file))
         logger.info(f"Saved session state for user {user_id} on {platform} -> {session_file}")
 
-    def import_session_json(self, user_id: int, platform: str, raw_json: str) -> bool:
-        """Imports user cookies/tokens provided as JSON."""
+    def import_session_json(self, user_id: int, platform: str, raw_data: str) -> bool:
+        """Imports user cookies, storage state, or raw Bearer token."""
+        raw_data = raw_data.strip()
+        session_file = self.get_session_file(user_id, platform)
+        domain_origin = "https://rooter.gg" if platform == "rooter" else "https://blinkit.com"
+
+        # Check if raw_data is a plain token string (e.g. Bearer eyJ... or eyJ...)
+        clean_token = raw_data
+        if clean_token.lower().startswith("bearer "):
+            clean_token = clean_token[7:].strip()
+
+        # If it's a raw string (not JSON dict or list), treat directly as auth token
+        if not (clean_token.startswith("{") or clean_token.startswith("[")):
+            if len(clean_token) > 10:
+                payload = {
+                    "cookies": [],
+                    "origins": [
+                        {
+                            "origin": domain_origin,
+                            "localStorage": [
+                                {"name": "token", "value": clean_token},
+                                {"name": "auth_token", "value": clean_token},
+                                {"name": "rooter_token", "value": clean_token},
+                                {"name": "authToken", "value": clean_token},
+                            ]
+                        }
+                    ]
+                }
+                with open(session_file, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                logger.info(f"Saved raw Bearer token for user {user_id} on {platform}")
+                return True
+            return False
+
         try:
-            parsed = json.loads(raw_json)
-            # Accept either raw list of cookies or full Playwright storage_state dict
-            session_file = self.get_session_file(user_id, platform)
+            parsed = json.loads(clean_token)
             if isinstance(parsed, list):
                 payload = {"cookies": parsed, "origins": []}
             elif isinstance(parsed, dict):
@@ -150,7 +180,7 @@ class BrowserManager:
                 json.dump(payload, f, indent=2)
             return True
         except Exception as e:
-            logger.error(f"Failed to import session JSON: {e}")
+            logger.error(f"Failed to import session data: {e}")
             return False
 
     async def capture_screenshot(self, page: Page, name_prefix: str = "shot") -> str:
