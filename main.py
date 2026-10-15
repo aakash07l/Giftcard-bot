@@ -22,12 +22,14 @@ import asyncio
 import warnings
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", category=PTBUserWarning)
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
     ConversationHandler,
+    ContextTypes,
     filters,
 )
 
