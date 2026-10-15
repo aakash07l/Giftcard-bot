@@ -131,7 +131,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/cancel</code> — Reset active operations\n\n"
         "🎯 <b>Auto-Sniper Workflow:</b>\n"
         "1. Send <code>/snipe</code> and choose Rooter or Blinkit + denomination.\n"
-        "2. Bot runs continuously in the background, refreshing the catalog every 15s.\n"
+        f"2. Bot runs continuously in the background, refreshing the catalog every {config.SNIPE_INTERVAL_SECONDS}s.\n"
         "3. Jaise hi PlayStation code restock hoga, bot turant 1-click buy karke code yahan bhej dega!"
     )
     if update.callback_query:
@@ -393,7 +393,7 @@ async def run_sniper_loop(
     stop_event: asyncio.Event,
 ):
     """
-    Background worker loop that refreshes Rooter / Blinkit every 15 seconds.
+    Background worker loop that refreshes Rooter / Blinkit every 30 seconds.
     As soon as stock is detected, it immediately executes purchase and delivers
     the PlayStation voucher code and PIN to the user on Telegram.
     """
@@ -494,8 +494,8 @@ async def run_sniper_loop(
                         reply_markup=get_stop_snipe_keyboard(),
                     )
 
-            # Heartbeat message every 20 checks (~5 minutes) so user knows bot is actively refreshing
-            if attempts % 20 == 0:
+            # Heartbeat message (Disabled by default to avoid chat spam and save credit)
+            if config.ENABLE_SNIPER_HEARTBEAT and attempts % 20 == 0:
                 try:
                     await bot.send_message(
                         chat_id=chat_id,
@@ -505,7 +505,7 @@ async def run_sniper_loop(
                             f"• <b>Platform:</b> {plat_name}\n"
                             f"• <b>Target:</b> PlayStation ₹{denomination:,}\n"
                             f"• <b>Refreshes Completed:</b> <code>{attempts}</code>\n"
-                            f"• <b>Status:</b> Actively checking every 15s. Ready to buy instantly when stock arrives!\n"
+                            f"• <b>Status:</b> Actively checking every {config.SNIPE_INTERVAL_SECONDS}s. Ready to buy instantly when stock arrives!\n"
                             f"━━━━━━━━━━━━━━━━━━━━━━"
                         ),
                         parse_mode=ParseMode.HTML,
@@ -514,9 +514,18 @@ async def run_sniper_loop(
                 except Exception:
                     pass
 
-            # Wait 15 seconds before next check (interrupted immediately if stop_event is set)
+            # Periodic memory cleanup: Refresh page every 50 checks to release Chromium memory
+            if attempts % 50 == 0:
+                try:
+                    if not page.is_closed():
+                        await page.close()
+                    page = await browser_context.new_page()
+                except Exception as e:
+                    logger.debug(f"Page memory cleanup: {e}")
+
+            # Wait before next check (interrupted immediately if stop_event is set)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=15.0)
+                await asyncio.wait_for(stop_event.wait(), timeout=float(config.SNIPE_INTERVAL_SECONDS))
                 # If wait_for returns without TimeoutError, stop_event was signaled
                 break
             except asyncio.TimeoutError:
@@ -676,7 +685,7 @@ async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFA
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎮 <b>Platform:</b> {plat_name}\n"
             f"💰 <b>Target Voucher:</b> PlayStation ₹{denomination:,}\n"
-            f"⏱️ <b>Refresh Rate:</b> Every 15 seconds\n"
+            f"⏱️ <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_SECONDS} seconds\n"
             f"⚡ <b>Mode:</b> <code>{mode_text}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"✅ <b>Bot stock monitor kar raha hai!</b>\n"

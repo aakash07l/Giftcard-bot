@@ -68,3 +68,13 @@ PLATFORMS = {
 }
 
 DEFAULT_DENOMINATIONS = [500, 1000, 1500, 2500, 4000, 5000]
+
+# Auto-Sniper Restock Refresh Interval in Seconds (Default: 30s)
+SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "30"))
+
+# Periodic Heartbeat Notifications in Chat (Set to False to avoid spam and save credit)
+ENABLE_SNIPER_HEARTBEAT = os.getenv("ENABLE_SNIPER_HEARTBEAT", "False").lower() in ("true", "1", "yes")
+
+# Resource Optimization: Block images and media in headless browser to minimize RAM/CPU usage on Railway
+BLOCK_MEDIA_RESOURCES = os.getenv("BLOCK_MEDIA_RESOURCES", "True").lower() in ("true", "1", "yes")
+

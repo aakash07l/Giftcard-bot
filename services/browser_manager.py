@@ -41,6 +41,12 @@ class BrowserManager:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-blink-features=AutomationControlled",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-default-apps",
+                    "--mute-audio",
+                    "--no-first-run",
                 ],
             )
             logger.info("Chromium browser launched successfully.")
@@ -97,6 +103,16 @@ class BrowserManager:
             timezone_id="Asia/Kolkata",
             extra_http_headers=extra_http_headers if extra_http_headers else None,
         )
+
+        # Block media resources (images, fonts, videos) to drastically save RAM, CPU, and Railway bandwidth
+        if config.BLOCK_MEDIA_RESOURCES:
+            try:
+                await context.route(
+                    "**/*.{png,jpg,jpeg,webp,gif,svg,woff,woff2,ttf,eot,mp4,webm,avi,mp3}",
+                    lambda route: route.abort()
+                )
+            except Exception:
+                pass
 
         # Anti-detection stealth script & LocalStorage injection for Auth Tokens
         init_script = """
