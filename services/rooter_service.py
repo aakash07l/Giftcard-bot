@@ -156,16 +156,18 @@ class RooterService(BasePlatform):
                     in_stock=in_stock,
                 ))
 
-        # Fallback catalog simulation if headless shop doesn't load dynamic SPA webview
+        # If cards list is empty or page indicates Out of Stock
         if not cards:
-            logger.info("Using standard Rooter PlayStation voucher denominations.")
+            body_text = await page.locator("body").inner_text()
+            is_out_of_stock = "out of stock" in body_text.lower() or "sold out" in body_text.lower()
+            logger.info(f"Rooter Shop catalog status: out_of_stock={is_out_of_stock}")
             for d in config.PLATFORMS["rooter"]["supported_denominations"]:
                 cards.append(CardItem(
-                    title=f"Rooter PSN Wallet Code ₹{d:,}",
+                    title=f"Rooter PlayStation Voucher ₹{d:,}",
                     denomination=d,
                     price=float(d),
                     platform="rooter",
-                    in_stock=True,
+                    in_stock=not is_out_of_stock,
                 ))
 
         if denomination:
@@ -192,7 +194,7 @@ class RooterService(BasePlatform):
                     success=False,
                     platform="rooter",
                     denomination=denomination,
-                    message=f"PlayStation Gift Card (₹{denomination:,}) is currently Out-of-Stock on Rooter Shop.",
+                    message=f"PlayStation Gift Card (₹{denomination:,}) is currently OUT OF STOCK on Rooter Shop. Please try Blinkit instead!",
                 )
 
             if progress_callback:
@@ -229,18 +231,37 @@ class RooterService(BasePlatform):
             if progress_callback:
                 await progress_callback("Completing purchase & verifying payment on Rooter...", "💳")
 
-            confirm_checkout = page.locator("button:has-text('Confirm'), button:has-text('Pay Now')").first
+            confirm_checkout = page.locator("button:has-text('Confirm'), button:has-text('Pay Now'), button:has-text('Proceed')").first
             if await confirm_checkout.is_visible(timeout=5000):
                 await confirm_checkout.click()
                 await page.wait_for_timeout(4000)
 
-            # Read voucher details modal / page
+            # Check page content for voucher details OR errors
             page_content = await page.locator("body").inner_text()
-            code_match = re.search(r"(?:Code|Voucher)[\s:]+([A-Z0-9-]{10,25})", page_content, re.IGNORECASE)
-            pin_match = re.search(r"(?:PIN|Key)[\s:]+([0-9]{4,8})", page_content, re.IGNORECASE)
-            order_match = re.search(r"(?:Order ID|Txn ID)[\s:]+([A-Z0-9#-]+)", page_content, re.IGNORECASE)
+            
+            # Check for error indicators (insufficient balance, payment failed, etc.)
+            if "insufficient" in page_content.lower() or "low balance" in page_content.lower() or "add coins" in page_content.lower():
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=denomination,
+                    message="Insufficient balance in your Rooter wallet. Please add funds/coins to your Rooter account first!",
+                )
 
-            code = code_match.group(1) if code_match else "Extracted from Rooter My Orders"
+            code_match = re.search(r"(?:Code|Voucher|Key)[\s:]+([A-Z0-9-]{10,25})", page_content, re.IGNORECASE)
+            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", page_content, re.IGNORECASE)
+            order_match = re.search(r"(?:Order ID|Txn ID|Reference)[\s:]+([A-Z0-9#-]+)", page_content, re.IGNORECASE)
+
+            if not code_match:
+                # No voucher was produced - payment was not completed or gateway pending
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=denomination,
+                    message="Purchase could not be completed automatically. Rooter requires active wallet balance or manual payment approval (UPI/QR).",
+                )
+
+            code = code_match.group(1)
             pin = pin_match.group(1) if pin_match else "N/A"
             order_id = order_match.group(1) if order_match else "Rooter Order"
 
