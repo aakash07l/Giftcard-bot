@@ -60,7 +60,7 @@ PLATFORMS = {
     },
     "rooter": {
         "name": "Rooter Shop",
-        "url": "https://rooter.gg/shop",
+        "url": "https://shop.rooter.gg",
         "search_query": "PlayStation",
         "description": "Gaming and esports voucher marketplace",
         "supported_denominations": [500, 1000, 2500, 4000],

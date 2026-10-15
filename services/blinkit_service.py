@@ -312,3 +312,11 @@ class BlinkitService(BasePlatform):
                 denomination=denomination,
                 message=f"Blinkit automation encountered an issue: {str(e)}",
             )
+
+    async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
+        """Fast check to see if PlayStation voucher is in stock on Blinkit."""
+        try:
+            cards = await self.search_playstation_cards(page, denomination=denomination)
+            return any(c.in_stock for c in cards)
+        except Exception:
+            return False

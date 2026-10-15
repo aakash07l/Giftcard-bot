@@ -19,3 +19,7 @@ class BotState(IntEnum):
     SELECT_BUY_PLATFORM = auto()
     SELECT_BUY_DENOMINATION = auto()
     AWAITING_CONFIRMATION = auto()
+
+    # Snipe / Restock monitor flow
+    SELECT_SNIPE_PLATFORM = auto()
+    SELECT_SNIPE_DENOMINATION = auto()

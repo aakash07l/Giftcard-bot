@@ -21,7 +21,7 @@ class RooterService(BasePlatform):
         super().__init__(
             platform_id="rooter",
             name="Rooter",
-            base_url="https://rooter.gg/shop"
+            base_url="https://shop.rooter.gg"
         )
 
     async def check_login_status(self, page: Page) -> bool:
@@ -285,3 +285,29 @@ class RooterService(BasePlatform):
                 denomination=denomination,
                 message=f"Rooter automation encountered an issue: {str(e)}",
             )
+
+    async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
+        """Fast check to see if PlayStation voucher is currently in stock on Rooter Shop."""
+        try:
+            await page.goto(self.base_url, timeout=20000)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1500)
+
+            # Search PlayStation
+            search_input = page.locator("input[placeholder*='Search']").first
+            if await search_input.is_visible(timeout=2000):
+                await search_input.fill("PlayStation")
+                await search_input.press("Enter")
+                await page.wait_for_timeout(2000)
+
+            body_text = await page.locator("body").inner_text()
+            # If all PlayStation items are labeled 'Out of Stock'
+            if "out of stock" in body_text.lower():
+                return False
+
+            # Check if any Redeem or Buy Now button is visible
+            redeem_btn = page.locator("button:has-text('Redeem'), button:has-text('Buy Now'), button:has-text('Claim')").first
+            return await redeem_btn.is_visible(timeout=2000)
+        except Exception as e:
+            logger.warning(f"Error checking Rooter stock: {e}")
+            return False

@@ -75,3 +75,8 @@ class BasePlatform(ABC):
     ) -> PurchaseResult:
         """Complete the purchase flow from search to cart, payment, and voucher extraction."""
         pass
+
+    @abstractmethod
+    async def check_is_in_stock(self, page, denomination: int) -> bool:
+        """Fast check to see if voucher of specified denomination is in stock."""
+        pass

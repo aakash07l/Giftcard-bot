@@ -26,8 +26,10 @@ from bot.keyboards import (
     get_platforms_keyboard,
     get_login_methods_keyboard,
     get_denominations_keyboard,
+    get_snipe_denominations_keyboard,
     get_confirmation_keyboard,
     get_alternate_platform_keyboard,
+    get_stop_snipe_keyboard,
     get_cancel_keyboard,
 )
 from services.browser_manager import browser_manager
@@ -46,8 +48,11 @@ PLATFORM_SERVICES: Dict[str, BasePlatform] = {
 # Temporary memory store for pending interactive logins
 LOGIN_SESSIONS: Dict[int, Dict[str, Any]] = {}
 
+# Active background auto-sniper jobs {user_id: {"task": Task, "stop_event": Event, ...}}
+ACTIVE_SNIPERS: Dict[int, Dict[str, Any]] = {}
+
 def format_status_text(user_id: int) -> str:
-    """Formats current bot status including logged-in platforms and mode in HTML."""
+    """Formats current bot status including logged-in platforms, sniper status, and mode in HTML."""
     if config.BLINKIT_AUTH_TOKEN:
         blinkit_logged = "🟢 Configured (ENV Token)"
     elif browser_manager.has_session(user_id, "blinkit"):
@@ -64,16 +69,26 @@ def format_status_text(user_id: int) -> str:
 
     mode_text = "🧪 Simulation (Dry Run - Safe)" if config.SIMULATION_MODE else "⚡ Live Purchasing"
 
+    sniper_info = ACTIVE_SNIPERS.get(user_id)
+    if sniper_info:
+        plat_disp = sniper_info["platform"].title()
+        denom_disp = sniper_info["denomination"]
+        checks = sniper_info.get("attempts", 0)
+        sniper_text = f"🟢 Active ({plat_disp} ₹{denom_disp:,} - <code>{checks}</code> checks)"
+    else:
+        sniper_text = "⚪ Inactive"
+
     return (
         f"🎮 <b>PlayStation Gift Card Buyer Bot</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Execution Mode:</b> <code>{mode_text}</code>\n"
+        f"• <b>24/7 Restock Sniper:</b> {sniper_text}\n"
         f"• <b>Blinkit Account:</b> {blinkit_logged}\n"
         f"• <b>Rooter Account:</b> {rooter_logged}\n"
         f"• <b>Delivery Pincode:</b> <code>{config.DEFAULT_PINCODE}</code>\n"
         f"• <b>Environment:</b> <code>{config.ENV}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Use the buttons below to log into your account or start buying PlayStation vouchers automatically."
+        f"Use the buttons below to log into your account, trigger instant buy, or start 24/7 auto-sniper."
     )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,17 +121,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 <b>PlayStation Buyer Bot — User Guide</b>\n\n"
         "⚡ <b>Commands:</b>\n"
-        "• <code>/start</code> — Main dashboard & platform picker\n"
-        "• <code>/buy</code> — Trigger automated voucher buying\n"
-        "• <code>/login</code> — Store platform session cookies or OTP login\n"
-        "• <code>/status</code> — View current sessions and configuration\n"
+        "• <code>/start</code> — Main dashboard & menu\n"
+        "• <code>/snipe</code> — 🎯 24/7 Restock Auto-Sniper (Auto-buys the second stock arrives!)\n"
+        "• <code>/stop</code> — 🛑 Stop active 24/7 restock monitoring\n"
+        "• <code>/buy</code> — Instant single purchase flow\n"
+        "• <code>/login</code> — Store platform session / Bearer Token\n"
+        "• <code>/status</code> — View current sessions, sniper status & mode\n"
         "• <code>/toggle_sim</code> — Switch between Safe Simulation & Live Buy\n"
         "• <code>/cancel</code> — Reset active operations\n\n"
-        "🛒 <b>How It Works:</b>\n"
-        "1. Choose platform (<b>Blinkit</b> or <b>Rooter</b>)\n"
-        "2. Select your desired denomination (₹500, ₹1000, ₹2500, etc.)\n"
-        "3. Bot launches a headless Playwright browser, searches for PlayStation vouchers, checks stock, and handles checkout.\n"
-        "4. Voucher Code and PIN are delivered right here in chat!"
+        "🎯 <b>Auto-Sniper Workflow:</b>\n"
+        "1. Send <code>/snipe</code> and choose Rooter or Blinkit + denomination.\n"
+        "2. Bot runs continuously in the background, refreshing the catalog every 15s.\n"
+        "3. Jaise hi PlayStation code restock hoga, bot turant 1-click buy karke code yahan bhej dega!"
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -365,6 +381,351 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
             await browser_context.close()
 
     return ConversationHandler.END
+
+# ==================== AUTO-SNIPER (24/7 RESTOCK MONITOR) ====================
+
+async def run_sniper_loop(
+    chat_id: int,
+    user_id: int,
+    platform: str,
+    denomination: int,
+    bot,
+    stop_event: asyncio.Event,
+):
+    """
+    Background worker loop that refreshes Rooter / Blinkit every 15 seconds.
+    As soon as stock is detected, it immediately executes purchase and delivers
+    the PlayStation voucher code and PIN to the user on Telegram.
+    """
+    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
+    service = PLATFORM_SERVICES.get(platform)
+    browser_context = None
+    page = None
+    attempts = 0
+
+    logger.info(f"Starting sniper loop for user {user_id} on {platform} ₹{denomination}")
+
+    try:
+        browser_context = await browser_manager.create_context(
+            user_id=user_id,
+            platform=platform,
+            apply_storage_state=True,
+        )
+        page = await browser_context.new_page()
+
+        while not stop_event.is_set():
+            attempts += 1
+            if user_id in ACTIVE_SNIPERS:
+                ACTIVE_SNIPERS[user_id]["attempts"] = attempts
+
+            logger.info(f"[Sniper #{attempts}] Checking stock on {platform} for ₹{denomination}...")
+
+            # Ensure page is alive
+            if page.is_closed():
+                page = await browser_context.new_page()
+
+            is_in_stock = False
+            try:
+                is_in_stock = await service.check_is_in_stock(page, denomination)
+            except Exception as e:
+                logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
+
+            if is_in_stock:
+                logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED for PlayStation ₹{denomination} on {platform}!")
+
+                # Notify Telegram user immediately
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"🚨 <b>STOCK DETECTED!</b>\n\n"
+                            f"🎮 <b>Platform:</b> {plat_name}\n"
+                            f"💰 <b>Voucher:</b> PlayStation ₹{denomination:,}\n\n"
+                            f"⚡ <b>Executing instant 1-click buy now...</b>"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+
+                # Execute purchase immediately
+                result = await service.execute_buy_flow(
+                    page=page,
+                    denomination=denomination,
+                    simulation=config.SIMULATION_MODE,
+                )
+
+                if result.success:
+                    sim_badge = " [SIMULATED TEST]" if result.simulation else ""
+                    v_code = html.escape(result.voucher_code or "")
+                    v_pin = html.escape(result.voucher_pin or "")
+                    o_id = html.escape(result.order_id or "")
+
+                    success_text = (
+                        f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎮 <b>Platform:</b> {plat_name}\n"
+                        f"💰 <b>Denomination:</b> ₹{result.denomination:,}\n"
+                        f"🔑 <b>Voucher Code:</b>\n<code>{v_code}</code>\n"
+                        f"🔒 <b>PIN / Key:</b>\n<code>{v_pin}</code>\n"
+                        f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"✨ <i>Auto-Sniper successfully caught the stock and secured your PlayStation code!</i>\n"
+                        f"Redeem this immediately on your PlayStation console or app."
+                    )
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=success_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=get_main_menu_keyboard(),
+                    )
+                    # Successful buy: finish sniper
+                    break
+                else:
+                    logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {result.message}")
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"⚠️ <b>Sniper Alert:</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
+                            f"<code>{html.escape(result.message)}</code>\n\n"
+                            f"<i>Monitoring will continue in the next cycle...</i>"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=get_stop_snipe_keyboard(),
+                    )
+
+            # Heartbeat message every 20 checks (~5 minutes) so user knows bot is actively refreshing
+            if attempts % 20 == 0:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"🔄 <b>Auto-Sniper Running (24/7 Restock Monitor)</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"• <b>Platform:</b> {plat_name}\n"
+                            f"• <b>Target:</b> PlayStation ₹{denomination:,}\n"
+                            f"• <b>Refreshes Completed:</b> <code>{attempts}</code>\n"
+                            f"• <b>Status:</b> Actively checking every 15s. Ready to buy instantly when stock arrives!\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=get_stop_snipe_keyboard(),
+                    )
+                except Exception:
+                    pass
+
+            # Wait 15 seconds before next check (interrupted immediately if stop_event is set)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=15.0)
+                # If wait_for returns without TimeoutError, stop_event was signaled
+                break
+            except asyncio.TimeoutError:
+                pass
+
+    except asyncio.CancelledError:
+        logger.info(f"Sniper task for user {user_id} was cancelled.")
+    except Exception as e:
+        logger.error(f"Error in sniper loop for user {user_id}: {e}", exc_info=True)
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>Auto-Sniper Error:</b> <code>{html.escape(str(e))}</code>\nMonitoring stopped.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
+        except Exception:
+            pass
+    finally:
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        if browser_context:
+            try:
+                await browser_context.close()
+            except Exception:
+                pass
+        ACTIVE_SNIPERS.pop(user_id, None)
+        logger.info(f"Sniper loop closed for user {user_id}")
+
+async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Initiates the 24/7 auto-sniper restock flow."""
+    user_id = update.effective_user.id if update.effective_user else 0
+    query = update.callback_query
+
+    # Check if this user already has an active sniper running
+    if user_id in ACTIVE_SNIPERS:
+        s_data = ACTIVE_SNIPERS[user_id]
+        p_name = config.PLATFORMS.get(s_data["platform"], {}).get("name", s_data["platform"].title())
+        msg = (
+            f"🎯 <b>Auto-Sniper is Already Running!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Platform:</b> {p_name}\n"
+            f"• <b>Voucher:</b> PlayStation ₹{s_data['denomination']:,}\n"
+            f"• <b>Page Refreshes:</b> <code>{s_data.get('attempts', 0)}</code>\n"
+            f"• <b>Status:</b> 🔄 Active & Monitoring stock\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Jaise hi PlayStation code stock me aayega, bot turant buy kar lega!\n"
+            f"Agar aap sniper ko rokna chahte hain to neeche button dabayein:"
+        )
+        if query:
+            await query.answer()
+            await query.edit_message_text(
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_stop_snipe_keyboard(),
+            )
+        else:
+            await update.message.reply_text(
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_stop_snipe_keyboard(),
+            )
+        return ConversationHandler.END
+
+    msg = (
+        "🎯 <b>Auto-Sniper / Restock Monitor (24/7)</b>\n\n"
+        "Bot lagatar page refresh karta rahega aur <b>jaise hi stock me PlayStation voucher aayega, turant instant-buy</b> kar lega!\n\n"
+        "<b>Step 1/2: Platform Choose Karein</b>"
+    )
+    if query:
+        await query.answer()
+        await query.edit_message_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_platforms_keyboard(prefix="snipe_plat"),
+        )
+    else:
+        await update.message.reply_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_platforms_keyboard(prefix="snipe_plat"),
+        )
+    return BotState.SELECT_SNIPE_PLATFORM
+
+async def snipe_platform_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Platform chosen for Auto-Sniper; ask denomination."""
+    query = update.callback_query
+    await query.answer()
+
+    _, platform = query.data.split(":", 1)
+    context.user_data["snipe_platform"] = platform
+    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
+
+    user_id = update.effective_user.id
+    has_session = browser_manager.has_session(user_id, platform)
+    login_note = ""
+    if not has_session:
+        login_note = (
+            f"\n\n⚠️ <b>Warning:</b> Aap {plat_name} par logged in nahi hain! "
+            f"Bot stock monitor to karega, par instant 1-click buy ke liye pehle <code>/login</code> se account token zaroor save kar lein."
+        )
+
+    await query.edit_message_text(
+        text=(
+            f"🎯 <b>Selected Platform:</b> {plat_name}\n\n"
+            f"<b>Step 2/2: Select PlayStation Denomination</b>\n"
+            f"Kis amount ka PlayStation voucher snipe karna hai?{login_note}"
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_snipe_denominations_keyboard(platform),
+    )
+    return BotState.SELECT_SNIPE_DENOMINATION
+
+async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Denomination picked; launches background auto-sniper loop."""
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":")
+    platform = parts[1]
+    denomination = int(parts[2])
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
+
+    stop_event = asyncio.Event()
+
+    task = asyncio.create_task(
+        run_sniper_loop(
+            chat_id=chat_id,
+            user_id=user_id,
+            platform=platform,
+            denomination=denomination,
+            bot=context.bot,
+            stop_event=stop_event,
+        )
+    )
+
+    ACTIVE_SNIPERS[user_id] = {
+        "task": task,
+        "stop_event": stop_event,
+        "platform": platform,
+        "denomination": denomination,
+        "chat_id": chat_id,
+        "attempts": 0,
+    }
+
+    mode_text = "🧪 Simulation (Dry Run)" if config.SIMULATION_MODE else "⚡ Live Purchasing (Real Checkout)"
+
+    await query.edit_message_text(
+        text=(
+            f"🚀 <b>Auto-Sniper Activated! (24/7 Restock Loop)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎮 <b>Platform:</b> {plat_name}\n"
+            f"💰 <b>Target Voucher:</b> PlayStation ₹{denomination:,}\n"
+            f"⏱️ <b>Refresh Rate:</b> Every 15 seconds\n"
+            f"⚡ <b>Mode:</b> <code>{mode_text}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ <b>Bot stock monitor kar raha hai!</b>\n"
+            f"Jaise hi PlayStation voucher stock me aayega, bot bina kisi delay ke turant buy kar lega aur voucher code aapko yahan message kar dega.\n\n"
+            f"<i>Aap Telegram band kar sakte hain ya doosra kaam kar sakte hain. Stop karne ke liye <code>/stop</code> dabayein.</i>"
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_stop_snipe_keyboard(),
+    )
+    return ConversationHandler.END
+
+async def stop_snipe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stops the active auto-sniper background process."""
+    user_id = update.effective_user.id if update.effective_user else 0
+    query = update.callback_query
+
+    if user_id in ACTIVE_SNIPERS:
+        sniper_data = ACTIVE_SNIPERS.pop(user_id)
+        stop_event = sniper_data.get("stop_event")
+        if stop_event:
+            stop_event.set()
+        task = sniper_data.get("task")
+        if task and not task.done():
+            task.cancel()
+
+        p_name = config.PLATFORMS.get(sniper_data["platform"], {}).get("name", sniper_data["platform"].title())
+        msg = (
+            f"🛑 <b>Auto-Sniper Stopped!</b>\n\n"
+            f"• Platform: {p_name}\n"
+            f"• Target: PlayStation ₹{sniper_data['denomination']:,}\n"
+            f"• Total Page Checks: <code>{sniper_data.get('attempts', 0)}</code>\n\n"
+            f"Stock monitoring paused. You can restart anytime with /snipe or /start."
+        )
+    else:
+        msg = "ℹ️ <b>No active auto-sniper is currently running.</b>\nStart one with /snipe."
+
+    if query:
+        await query.answer("Auto-Sniper stopped.")
+        await query.edit_message_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
+    else:
+        await update.message.reply_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
 
 # ==================== LOGIN WORKFLOW ====================
 

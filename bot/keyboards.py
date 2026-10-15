@@ -11,18 +11,25 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Builds the main menu dashboard keyboard."""
     keyboard = [
         [
-            InlineKeyboardButton("🛒 Buy PS Gift Card", callback_data="buy_start"),
+            InlineKeyboardButton("🎯 Auto-Snipe Stock (24/7)", callback_data="snipe_start"),
+            InlineKeyboardButton("🛒 Instant Buy Now", callback_data="buy_start"),
+        ],
+        [
             InlineKeyboardButton("🔑 Account Login", callback_data="login_start"),
+            InlineKeyboardButton("📊 Status & Sessions", callback_data="status_check"),
         ],
         [
-            InlineKeyboardButton("📊 Session & Balance Status", callback_data="status_check"),
             InlineKeyboardButton("⚙️ Toggle Sim Mode", callback_data="toggle_sim"),
-        ],
-        [
-            InlineKeyboardButton("📖 Help & Commands", callback_data="help_info"),
+            InlineKeyboardButton("📖 Help & Guide", callback_data="help_info"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard to cancel active auto-sniper."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛑 Stop Auto-Sniper", callback_data="stop_snipe_action")]
+    ])
 
 def get_platforms_keyboard(prefix: str = "plat_select") -> InlineKeyboardMarkup:
     """Keyboard to select between supported voucher platforms (Blinkit, Rooter)."""
@@ -78,6 +85,30 @@ def get_denominations_keyboard(platform: str, denominations: List[int] = None) -
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
     return InlineKeyboardMarkup(rows)
+
+def get_snipe_denominations_keyboard(platform: str, denominations: List[int] = None) -> InlineKeyboardMarkup:
+    """Keyboard to pick PlayStation voucher denomination for Auto-Sniper."""
+    if not denominations:
+        platform_info = config.PLATFORMS.get(platform, {})
+        denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
+
+    rows = []
+    current_row = []
+    for denom in denominations:
+        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"snipe_denom:{platform}:{denom}")
+        current_row.append(btn)
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+
+    rows.append([
+        InlineKeyboardButton("🔄 Change Platform", callback_data="snipe_start"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
 
 def get_confirmation_keyboard(platform: str, denomination: int) -> InlineKeyboardMarkup:
     """Keyboard to confirm purchase before triggering Playwright headless checkout."""

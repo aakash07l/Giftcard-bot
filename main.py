@@ -50,6 +50,10 @@ from bot.handlers import (
     handle_phone_received,
     handle_otp_received,
     handle_cookie_received,
+    snipe_start_handler,
+    snipe_platform_selected,
+    snipe_denomination_selected,
+    stop_snipe_handler,
     cancel_flow,
 )
 from services.browser_manager import browser_manager
@@ -129,12 +133,41 @@ def build_application():
         allow_reentry=True,
     )
 
+    # 3. Auto-Sniper / Restock Monitor Conversation Handler
+    snipe_conversation = ConversationHandler(
+        entry_points=[
+            CommandHandler("snipe", snipe_start_handler),
+            CallbackQueryHandler(snipe_start_handler, pattern="^snipe_start$"),
+        ],
+        states={
+            BotState.SELECT_SNIPE_PLATFORM: [
+                CallbackQueryHandler(snipe_platform_selected, pattern="^snipe_plat:"),
+                CallbackQueryHandler(start_command, pattern="^nav_main_menu$"),
+            ],
+            BotState.SELECT_SNIPE_DENOMINATION: [
+                CallbackQueryHandler(snipe_denomination_selected, pattern="^snipe_denom:"),
+                CallbackQueryHandler(snipe_start_handler, pattern="^snipe_start$"),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_flow),
+            CommandHandler("stop", stop_snipe_handler),
+            CallbackQueryHandler(cancel_flow, pattern="^cancel_action$"),
+            CallbackQueryHandler(stop_snipe_handler, pattern="^stop_snipe_action$"),
+            CallbackQueryHandler(start_command, pattern="^nav_main_menu$"),
+        ],
+        allow_reentry=True,
+    )
+
     # Register conversations
+    app.add_handler(snipe_conversation)
     app.add_handler(buy_conversation)
     app.add_handler(login_conversation)
 
     # Register general command handlers
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("snipe", snipe_start_handler))
+    app.add_handler(CommandHandler("stop", stop_snipe_handler))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("toggle_sim", toggle_sim_handler))
@@ -145,6 +178,7 @@ def build_application():
     app.add_handler(CallbackQueryHandler(status_command, pattern="^status_check$"))
     app.add_handler(CallbackQueryHandler(help_command, pattern="^help_info$"))
     app.add_handler(CallbackQueryHandler(toggle_sim_handler, pattern="^toggle_sim$"))
+    app.add_handler(CallbackQueryHandler(stop_snipe_handler, pattern="^stop_snipe_action$"))
     app.add_handler(CallbackQueryHandler(cancel_flow, pattern="^cancel_action$"))
 
     # Global error handler

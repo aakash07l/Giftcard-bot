@@ -147,11 +147,19 @@ class BrowserManager:
         # If it's a raw string (not JSON dict or list), treat directly as auth token
         if not (clean_token.startswith("{") or clean_token.startswith("[")):
             if len(clean_token) > 10:
-                payload = {
-                    "cookies": [],
-                    "origins": [
+                if platform == "rooter":
+                    origins = [
                         {
-                            "origin": domain_origin,
+                            "origin": "https://shop.rooter.gg",
+                            "localStorage": [
+                                {"name": "token", "value": clean_token},
+                                {"name": "auth_token", "value": clean_token},
+                                {"name": "rooter_token", "value": clean_token},
+                                {"name": "authToken", "value": clean_token},
+                            ]
+                        },
+                        {
+                            "origin": "https://rooter.gg",
                             "localStorage": [
                                 {"name": "token", "value": clean_token},
                                 {"name": "auth_token", "value": clean_token},
@@ -160,6 +168,20 @@ class BrowserManager:
                             ]
                         }
                     ]
+                else:
+                    origins = [
+                        {
+                            "origin": "https://blinkit.com",
+                            "localStorage": [
+                                {"name": "token", "value": clean_token},
+                                {"name": "auth_token", "value": clean_token},
+                            ]
+                        }
+                    ]
+
+                payload = {
+                    "cookies": [],
+                    "origins": origins
                 }
                 with open(session_file, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=2)
