@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables & secrets
+.env
+
+# User session cookies & storage states
+sessions/
+!sessions/.gitkeep
+
+# Error screenshots & logs
+screenshots/
+!screenshots/.gitkeep
+*.log
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
