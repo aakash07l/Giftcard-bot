@@ -50,7 +50,12 @@ class BrowserManager:
         return config.SESSION_DIR / f"user_{user_id}_{platform}.json"
 
     def has_session(self, user_id: int, platform: str) -> bool:
-        """Checks if a user session file exists and contains valid cookies."""
+        """Checks if a user session file exists or if static AUTH_TOKEN is set in config."""
+        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
+            return True
+        if platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+            return True
+
         session_file = self.get_session_file(user_id, platform)
         if not session_file.exists():
             return False
@@ -76,6 +81,12 @@ class BrowserManager:
             if s_file.exists():
                 storage_path = str(s_file)
 
+        extra_http_headers = {}
+        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
+            extra_http_headers["authorization"] = f"Bearer {config.BLINKIT_AUTH_TOKEN}"
+        elif platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+            extra_http_headers["authorization"] = f"Bearer {config.ROOTER_AUTH_TOKEN}"
+
         context = await self._browser.new_context(
             storage_state=storage_path,
             user_agent=DEFAULT_USER_AGENT,
@@ -84,17 +95,35 @@ class BrowserManager:
             geolocation={"latitude": config.DEFAULT_LATITUDE, "longitude": config.DEFAULT_LONGITUDE},
             locale="en-IN",
             timezone_id="Asia/Kolkata",
+            extra_http_headers=extra_http_headers if extra_http_headers else None,
         )
 
-        # Anti-detection stealth script
-        await context.add_init_script("""
+        # Anti-detection stealth script & LocalStorage injection for Auth Tokens
+        init_script = """
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
             window.chrome = {
                 runtime: {}
             };
-        """)
+        """
+        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
+            init_script += f"""
+                try {{
+                    localStorage.setItem('auth_token', '{config.BLINKIT_AUTH_TOKEN}');
+                    localStorage.setItem('token', '{config.BLINKIT_AUTH_TOKEN}');
+                }} catch (e) {{}}
+            """
+        elif platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+            init_script += f"""
+                try {{
+                    localStorage.setItem('rooter_token', '{config.ROOTER_AUTH_TOKEN}');
+                    localStorage.setItem('token', '{config.ROOTER_AUTH_TOKEN}');
+                    localStorage.setItem('authToken', '{config.ROOTER_AUTH_TOKEN}');
+                }} catch (e) {{}}
+            """
+
+        await context.add_init_script(init_script)
 
         return context
 

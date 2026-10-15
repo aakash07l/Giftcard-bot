@@ -1,8 +1,10 @@
 """
 Telegram Bot handlers for commands, conversations, and interactive callbacks.
-Manages user sessions, live progress notifications, and triggers the Playwright purchase flow.
+Uses HTML ParseMode for ultra-stable, error-free formatting.
+Supports environment credentials (ROOTER_AUTH_TOKEN, BLINKIT_AUTH_TOKEN) and interactive flows.
 """
 
+import html
 import asyncio
 import logging
 from typing import Dict, Any, Optional
@@ -42,33 +44,46 @@ PLATFORM_SERVICES: Dict[str, BasePlatform] = {
 }
 
 # Temporary memory store for pending interactive logins
-# user_id -> {"platform": str, "otp_event": asyncio.Event, "otp_value": str, "phone": str}
 LOGIN_SESSIONS: Dict[int, Dict[str, Any]] = {}
 
 def format_status_text(user_id: int) -> str:
-    """Formats current bot status including logged-in platforms and mode."""
-    blinkit_logged = "🟢 Logged In" if browser_manager.has_session(user_id, "blinkit") else "🔴 Not Logged In"
-    rooter_logged = "🟢 Logged In" if browser_manager.has_session(user_id, "rooter") else "🔴 Not Logged In"
+    """Formats current bot status including logged-in platforms and mode in HTML."""
+    if config.BLINKIT_AUTH_TOKEN:
+        blinkit_logged = "🟢 Configured (ENV Token)"
+    elif browser_manager.has_session(user_id, "blinkit"):
+        blinkit_logged = "🟢 Logged In (Session)"
+    else:
+        blinkit_logged = "🔴 Not Logged In"
+
+    if config.ROOTER_AUTH_TOKEN:
+        rooter_logged = "🟢 Configured (ENV Token)"
+    elif browser_manager.has_session(user_id, "rooter"):
+        rooter_logged = "🟢 Logged In (Session)"
+    else:
+        rooter_logged = "🔴 Not Logged In"
+
     mode_text = "🧪 Simulation (Dry Run - Safe)" if config.SIMULATION_MODE else "⚡ Live Purchasing"
 
     return (
-        f"🎮 *PlayStation Gift Card Buyer Bot*\n"
+        f"🎮 <b>PlayStation Gift Card Buyer Bot</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"• *Execution Mode:* `{mode_text}`\n"
-        f"• *Blinkit Session:* {blinkit_logged}\n"
-        f"• *Rooter Session:* {rooter_logged}\n"
-        f"• *Delivery Pincode:* `{config.DEFAULT_PINCODE}`\n"
+        f"• <b>Execution Mode:</b> <code>{mode_text}</code>\n"
+        f"• <b>Blinkit Account:</b> {blinkit_logged}\n"
+        f"• <b>Rooter Account:</b> {rooter_logged}\n"
+        f"• <b>Delivery Pincode:</b> <code>{config.DEFAULT_PINCODE}</code>\n"
+        f"• <b>Environment:</b> <code>{config.ENV}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Use the buttons below to log into your account or start buying PlayStation vouchers automatically\\."
+        f"Use the buttons below to log into your account or start buying PlayStation vouchers automatically."
     )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
     user = update.effective_user
     user_id = user.id if user else 0
+    first_name = html.escape(user.first_name if user and user.first_name else "Gamer")
 
     welcome_msg = (
-        f"👋 *Welcome, {user.first_name if user else 'Gamer'}!*\n\n"
+        f"👋 <b>Welcome, {first_name}!</b>\n\n"
         + format_status_text(user_id)
     )
 
@@ -76,44 +91,44 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
             text=welcome_msg,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             text=welcome_msg,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /help command."""
     help_text = (
-        "📖 *PlayStation Buyer Bot — User Guide*\n\n"
-        "⚡ *Commands:*\n"
-        "• `/start` — Main dashboard & platform picker\n"
-        "• `/buy` — Trigger the automated voucher buying process\n"
-        "• `/login` — Store platform session cookies or OTP login\n"
-        "• `/status` — View current sessions and configuration\n"
-        "• `/toggle_sim` — Switch between Safe Simulation & Live Buy\n"
-        "• `/cancel` — Reset active operations\n\n"
-        "🛒 *How It Works:*\n"
-        "1\\. Choose platform \\(*Blinkit* or *Rooter*\\)\n"
-        "2\\. Select your desired denomination \\(₹500, ₹1000, ₹2500, etc\\.\\)\n"
-        "3\\. Bot launches a headless Playwright browser, searches for PlayStation vouchers, checks stock, and handles checkout\\.\n"
-        "4\\. Voucher Code and PIN are delivered right here in chat\\!"
+        "📖 <b>PlayStation Buyer Bot — User Guide</b>\n\n"
+        "⚡ <b>Commands:</b>\n"
+        "• <code>/start</code> — Main dashboard & platform picker\n"
+        "• <code>/buy</code> — Trigger automated voucher buying\n"
+        "• <code>/login</code> — Store platform session cookies or OTP login\n"
+        "• <code>/status</code> — View current sessions and configuration\n"
+        "• <code>/toggle_sim</code> — Switch between Safe Simulation & Live Buy\n"
+        "• <code>/cancel</code> — Reset active operations\n\n"
+        "🛒 <b>How It Works:</b>\n"
+        "1. Choose platform (<b>Blinkit</b> or <b>Rooter</b>)\n"
+        "2. Select your desired denomination (₹500, ₹1000, ₹2500, etc.)\n"
+        "3. Bot launches a headless Playwright browser, searches for PlayStation vouchers, checks stock, and handles checkout.\n"
+        "4. Voucher Code and PIN are delivered right here in chat!"
     )
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
             text=help_text,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             text=help_text,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
@@ -125,13 +140,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
             text=text,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             text=text,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
@@ -139,35 +154,36 @@ async def toggle_sim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Toggles simulation mode on or off."""
     config.SIMULATION_MODE = not config.SIMULATION_MODE
     new_state = "🧪 SIMULATION (Safe Dry Run)" if config.SIMULATION_MODE else "⚡ LIVE PURCHASING (Real Payment)"
-    msg = f"⚙️ Mode updated to: *{new_state}*"
+    msg = f"⚙️ Mode updated to: <b>{new_state}</b>"
 
     user_id = update.effective_user.id if update.effective_user else 0
     if update.callback_query:
         await update.callback_query.answer(f"Switched to {new_state}")
         await update.callback_query.edit_message_text(
             text=f"{msg}\n\n" + format_status_text(user_id),
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 # ==================== BUY WORKFLOW ====================
 
 async def buy_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiates the buy flow by asking for platform selection."""
     query = update.callback_query
+    msg = "🛒 <b>Step 1/3: Choose Platform</b>\n\nSelect where you want to buy the PlayStation Gift Card from:"
     if query:
         await query.answer()
         await query.edit_message_text(
-            text="🛒 *Step 1/3: Choose Platform*\n\nSelect where you want to buy the PlayStation Gift Card from:",
-            parse_mode=ParseMode.MARKDOWN,
+            text=msg,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_platforms_keyboard(prefix="buy_plat"),
         )
     else:
         await update.message.reply_text(
-            text="🛒 *Step 1/3: Choose Platform*\n\nSelect where you want to buy the PlayStation Gift Card from:",
-            parse_mode=ParseMode.MARKDOWN,
+            text=msg,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_platforms_keyboard(prefix="buy_plat"),
         )
     return BotState.SELECT_BUY_PLATFORM
@@ -184,11 +200,11 @@ async def buy_platform_selected(update: Update, context: ContextTypes.DEFAULT_TY
 
     await query.edit_message_text(
         text=(
-            f"🎯 *Selected Platform:* {plat_name}\n\n"
-            f"🛒 *Step 2/3: Select Denomination*\n"
+            f"🎯 <b>Selected Platform:</b> {plat_name}\n\n"
+            f"🛒 <b>Step 2/3: Select Denomination</b>\n"
             f"Choose the amount for your PlayStation Gift Card:"
         ),
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=get_denominations_keyboard(platform),
     )
     return BotState.SELECT_BUY_DENOMINATION
@@ -210,16 +226,16 @@ async def buy_denomination_selected(update: Update, context: ContextTypes.DEFAUL
 
     await query.edit_message_text(
         text=(
-            f"📝 *Order Confirmation*\n"
+            f"📝 <b>Order Confirmation</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• *Item:* PlayStation Gift Card\n"
-            f"• *Platform:* {plat_name}\n"
-            f"• *Denomination:* ₹{denomination:,}\n"
-            f"• *Mode:* `{mode_text}`\n"
+            f"• <b>Item:</b> PlayStation Gift Card\n"
+            f"• <b>Platform:</b> {plat_name}\n"
+            f"• <b>Denomination:</b> ₹{denomination:,}\n"
+            f"• <b>Mode:</b> <code>{mode_text}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Click *Confirm & Buy Now* to trigger the Playwright automation engine\\."
+            f"Click <b>Confirm & Buy Now</b> to trigger the Playwright automation engine."
         ),
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.HTML,
         reply_markup=get_confirmation_keyboard(platform, denomination),
     )
     return BotState.AWAITING_CONFIRMATION
@@ -243,16 +259,16 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Initial live status message
     status_msg = await query.edit_message_text(
-        text=f"🔍 *Connecting to Playwright Engine for {plat_name}...*",
-        parse_mode=ParseMode.MARKDOWN,
+        text=f"🔍 <b>Connecting to Playwright Engine for {plat_name}...</b>",
+        parse_mode=ParseMode.HTML,
     )
 
     # Helper callback to send live updates directly to user
     async def progress_notifier(step_text: str, emoji: str = "⚡"):
         try:
             await status_msg.edit_text(
-                text=f"{emoji} *{step_text}*\n\n_Automating via Headless Chromium..._",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"{emoji} <b>{html.escape(step_text)}</b>\n\n<i>Automating via Headless Chromium...</i>",
+                parse_mode=ParseMode.HTML,
             )
         except Exception:
             pass
@@ -278,20 +294,24 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
 
         if result.success:
             sim_badge = " [SIMULATED TEST]" if result.simulation else ""
+            v_code = html.escape(result.voucher_code or "")
+            v_pin = html.escape(result.voucher_pin or "")
+            o_id = html.escape(result.order_id or "")
+
             success_text = (
-                f"🎉 *PURCHASE SUCCESSFUL!*{sim_badge}\n"
+                f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎮 *Platform:* {plat_name}\n"
-                f"💰 *Denomination:* ₹{result.denomination:,}\n"
-                f"🔑 *Voucher Code:*\n`{result.voucher_code}`\n"
-                f"🔒 *PIN / Key:*\n`{result.voucher_pin}`\n"
-                f"🧾 *Order ID:* `{result.order_id}`\n"
+                f"🎮 <b>Platform:</b> {plat_name}\n"
+                f"💰 <b>Denomination:</b> ₹{result.denomination:,}\n"
+                f"🔑 <b>Voucher Code:</b>\n<code>{v_code}</code>\n"
+                f"🔒 <b>PIN / Key:</b>\n<code>{v_pin}</code>\n"
+                f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✨ Redeem this on your PlayStation Store console or app\\."
+                f"✨ Redeem this on your PlayStation Store console or app."
             )
             await status_msg.edit_text(
                 text=success_text,
-                parse_mode=ParseMode.MARKDOWN_V2,
+                parse_mode=ParseMode.HTML,
                 reply_markup=get_main_menu_keyboard(),
             )
         else:
@@ -299,23 +319,23 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
             screenshot_path = await browser_manager.capture_screenshot(page, name_prefix=f"err_{platform}")
 
             fail_text = (
-                f"⚠️ *Notice: Purchase Flow Stopped*\n\n"
-                f"• *Platform:* {plat_name}\n"
-                f"• *Reason:* {result.message}\n\n"
+                f"⚠️ <b>Notice: Purchase Flow Stopped</b>\n\n"
+                f"• <b>Platform:</b> {plat_name}\n"
+                f"• <b>Reason:</b> {html.escape(result.message)}\n\n"
             )
 
             # Check if Out of stock -> offer alternate platform
             if "out of stock" in result.message.lower() or "out-of-stock" in result.message.lower():
-                fail_text += "💡 *Tip:* Check availability on the alternative platform below:"
+                fail_text += "💡 <b>Tip:</b> Check availability on the alternative platform below:"
                 await status_msg.edit_text(
                     text=fail_text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=get_alternate_platform_keyboard(platform, denomination),
                 )
             else:
                 await status_msg.edit_text(
                     text=fail_text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
 
@@ -326,7 +346,7 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
                         await context.bot.send_photo(
                             chat_id=update.effective_chat.id,
                             photo=photo,
-                            caption=f"📸 Screenshot captured at failure on {plat_name}",
+                            caption=f"📸 Screenshot captured on {plat_name}",
                         )
                 except Exception as ex:
                     logger.warning(f"Could not dispatch screenshot: {ex}")
@@ -334,8 +354,8 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"Execution error in buy workflow: {e}", exc_info=True)
         await status_msg.edit_text(
-            text=f"❌ *Automation Error:*\n`{str(e)}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>Automation Error:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     finally:
@@ -351,18 +371,18 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
 async def login_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiates login flow by prompting for platform selection."""
     query = update.callback_query
-    msg = "🔑 *Step 1/2: Select Platform for Login*\n\nChoose the platform you wish to authenticate:"
+    msg = "🔑 <b>Step 1/2: Select Platform for Login</b>\n\nChoose the platform you wish to authenticate:"
     if query:
         await query.answer()
         await query.edit_message_text(
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_platforms_keyboard(prefix="login_plat"),
         )
     else:
         await update.message.reply_text(
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_platforms_keyboard(prefix="login_plat"),
         )
     return BotState.SELECT_LOGIN_PLATFORM
@@ -378,10 +398,10 @@ async def login_platform_selected(update: Update, context: ContextTypes.DEFAULT_
 
     await query.edit_message_text(
         text=(
-            f"🔑 *Platform:* {plat_name}\n\n"
+            f"🔑 <b>Platform:</b> {plat_name}\n\n"
             f"Select your preferred authentication method:"
         ),
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=get_login_methods_keyboard(platform),
     )
     return BotState.SELECT_LOGIN_METHOD
@@ -398,14 +418,21 @@ async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["login_platform"] = platform
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
 
+    # Pre-configured phone number check
+    default_phone = ""
+    if platform == "blinkit" and config.BLINKIT_MOBILE:
+        default_phone = f"\n💡 <i>(Pre-configured in ENV: {config.BLINKIT_MOBILE})</i>"
+    elif platform == "rooter" and config.ROOTER_MOBILE:
+        default_phone = f"\n💡 <i>(Pre-configured in ENV: {config.ROOTER_MOBILE})</i>"
+
     if method == "phone":
         await query.edit_message_text(
             text=(
-                f"📱 *Interactive Phone Login — {plat_name}*\n\n"
-                f"Please reply with your *10-digit mobile number* linked to {plat_name}:\n"
-                f"_(Example: 9876543210)_"
+                f"📱 <b>Interactive Phone Login — {plat_name}</b>\n\n"
+                f"Please reply with your <b>10-digit mobile number</b> linked to {plat_name}:\n"
+                f"<i>(Example: 9876543210)</i>{default_phone}"
             ),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
         )
         return BotState.AWAITING_PHONE
@@ -413,12 +440,12 @@ async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TY
     elif method == "cookie":
         await query.edit_message_text(
             text=(
-                f"🍪 *Paste Session JSON / Cookies — {plat_name}*\n\n"
-                f"Export cookies or storage state from your desktop browser for `{config.PLATFORMS.get(platform, {}).get('url')}` "
+                f"🍪 <b>Paste Session JSON / Cookies — {plat_name}</b>\n\n"
+                f"Export cookies or storage state from your desktop browser for <code>{config.PLATFORMS.get(platform, {}).get('url')}</code> "
                 f"and paste the JSON here:\n\n"
-                f"_(Format: [{{'name': '...', 'value': '...'}}] or Playwright storage state dict)_"
+                f"<i>(Format: [{{'name': '...', 'value': '...'}}] or Playwright storage state dict)</i>"
             ),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
         )
         return BotState.AWAITING_COOKIE_DATA
@@ -440,21 +467,20 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
     }
 
     status_msg = await update.message.reply_text(
-        f"⏳ *Launching headless browser to request OTP on {platform.title()}...*",
-        parse_mode=ParseMode.MARKDOWN,
+        f"⏳ <b>Launching headless browser to request OTP on {platform.title()}...</b>",
+        parse_mode=ParseMode.HTML,
     )
 
     async def wait_for_otp() -> str:
         await status_msg.edit_text(
-            f"📩 *OTP has been triggered to {phone_text}!*",
-            parse_mode=ParseMode.MARKDOWN,
+            f"📩 <b>OTP has been triggered to {phone_text}!</b>",
+            parse_mode=ParseMode.HTML,
         )
         await update.message.reply_text(
-            "🔢 *Please reply with the 4-6 digit OTP you just received:*",
-            parse_mode=ParseMode.MARKDOWN,
+            "🔢 <b>Please reply with the 4-6 digit OTP you just received:</b>",
+            parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
         )
-        # Wait up to 120 seconds for user reply
         try:
             await asyncio.wait_for(otp_event.wait(), timeout=120)
             return LOGIN_SESSIONS.get(user_id, {}).get("otp_value", "")
@@ -475,23 +501,22 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
             )
 
             if success:
-                # Save session state
                 await browser_manager.save_session(browser_context, user_id, platform)
                 await update.message.reply_text(
-                    f"✅ *Successfully logged into {platform.title()}!*\n"
-                    f"Session cookies have been saved\\. You can now use `/buy`\\.",
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    f"✅ <b>Successfully logged into {platform.title()}!</b>\n"
+                    f"Session cookies have been saved. You can now use <code>/buy</code>.",
+                    parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
             else:
                 await update.message.reply_text(
-                    f"❌ Login failed or timed out on {platform.title()}\\. Please try again with `/login`\\.",
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    f"❌ Login failed or timed out on {platform.title()}. Please try again with <code>/login</code>.",
+                    parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
         except Exception as e:
             logger.error(f"Login error: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Error during login: {str(e)}")
+            await update.message.reply_text(f"❌ Error during login: {html.escape(str(e))}")
         finally:
             if page:
                 await page.close()
@@ -499,7 +524,6 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
                 await browser_context.close()
             LOGIN_SESSIONS.pop(user_id, None)
 
-    # Run browser login task asynchronously
     asyncio.create_task(run_login_task())
     return BotState.AWAITING_OTP
 
@@ -526,14 +550,14 @@ async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_T
     success = browser_manager.import_session_json(user_id, platform, cookie_text)
     if success:
         await update.message.reply_text(
-            f"✅ *Cookies successfully imported for {platform.title()}!*\n"
-            f"You can now trigger automated purchases with `/buy`\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"✅ <b>Cookies successfully imported for {platform.title()}!</b>\n"
+            f"You can now trigger automated purchases with <code>/buy</code>.",
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
-            "❌ Invalid JSON format. Please ensure you paste valid cookies array or Playwright storage state dict.",
+            "❌ Invalid JSON format. Please ensure you paste a valid cookies array or Playwright storage state dict.",
             reply_markup=get_main_menu_keyboard(),
         )
     return ConversationHandler.END

@@ -23,9 +23,20 @@ if not BOT_TOKEN:
 # Simulation / Dry Run mode (safe mode for testing without real card debit)
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "True").lower() in ("true", "1", "yes")
 
+# Application Environment
+ENV = os.getenv("ENV", "production").lower()
+
 # Browser Configuration
 HEADLESS = os.getenv("HEADLESS", "True").lower() in ("true", "1", "yes")
 BROWSER_TIMEOUT_MS = int(os.getenv("BROWSER_TIMEOUT_MS", "45000"))
+
+# Rooter Account Credentials / Auth Details
+ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "").strip()
+ROOTER_AUTH_TOKEN = os.getenv("ROOTER_AUTH_TOKEN", "").strip()
+
+# Blinkit Account Credentials / Auth Details
+BLINKIT_MOBILE = os.getenv("BLINKIT_MOBILE", "").strip()
+BLINKIT_AUTH_TOKEN = os.getenv("BLINKIT_AUTH_TOKEN", "").strip()
 
 # Default Location Settings (Blinkit dark-store localization)
 DEFAULT_PINCODE = os.getenv("DEFAULT_PINCODE", "110001")

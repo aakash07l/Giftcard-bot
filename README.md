@@ -73,9 +73,23 @@ ps_giftcard_bot/
 ### 1. Configure `.env`
 Edit the `.env` file in the project root:
 ```env
+# 1. Telegram Credentials
 BOT_TOKEN=8975433711:AAFk_OxMHcTR67JyXsbLwI1l4Ougm69z82I
+
+# 2. Execution Mode
 SIMULATION_MODE=True
-HEADLESS=True
+
+# 3. Rooter Account Credentials / Auth Details
+ROOTER_MOBILE=9876543210
+ROOTER_AUTH_TOKEN=your_rooter_bearer_token_here
+
+# 4. Blinkit Account Credentials / Auth Details
+BLINKIT_MOBILE=9876543210
+BLINKIT_AUTH_TOKEN=your_blinkit_token_here
+
+# 5. Application Settings
+HEADLESS=true
+ENV=production
 DEFAULT_PINCODE=110001
 ```
 
@@ -93,10 +107,16 @@ python main.py
 1. Push this repository to GitHub or connect via Railway CLI.
 2. In Railway dashboard, click **New Project** -> **Deploy from GitHub Repo**.
 3. Railway will detect the `Dockerfile` and `railway.json`.
-4. In Railway **Variables**, add:
+4. In Railway **Variables**, add the following environment variables:
    - `BOT_TOKEN`: `8975433711:AAFk_OxMHcTR67JyXsbLwI1l4Ougm69z82I`
-   - `SIMULATION_MODE`: `True` (or `False` when ready for live purchases)
-   - `HEADLESS`: `True`
+   - `SIMULATION_MODE`: `True` (Testing) or `False` (Live purchases)
+   - `HEADLESS`: `true`
+   - `ENV`: `production`
+   - `ROOTER_MOBILE`: (Optional) Your 10-digit mobile number for Rooter
+   - `ROOTER_AUTH_TOKEN`: (Optional) Your Rooter Bearer token
+   - `BLINKIT_MOBILE`: (Optional) Your 10-digit mobile number for Blinkit
+   - `BLINKIT_AUTH_TOKEN`: (Optional) Your Blinkit session/auth token
+   - `DEFAULT_PINCODE`: `110001` (Or your preferred delivery pincode)
 5. Railway will automatically build the container with Chromium and launch the bot worker.
 
 ### Deploying to Replit
