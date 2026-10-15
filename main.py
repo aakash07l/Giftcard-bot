@@ -145,6 +145,19 @@ def build_application():
     app.add_handler(CallbackQueryHandler(toggle_sim_handler, pattern="^toggle_sim$"))
     app.add_handler(CallbackQueryHandler(cancel_flow, pattern="^cancel_action$"))
 
+    # Global error handler
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error("Exception while handling an update:", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "⚠️ Something went wrong. Please send /start to reload the menu."
+                )
+            except Exception:
+                pass
+
+    app.add_error_handler(global_error_handler)
+
     return app
 
 def main():
