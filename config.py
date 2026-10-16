@@ -21,7 +21,7 @@ if not BOT_TOKEN:
     BOT_TOKEN = "8975433711:AAFk_OxMHcTR67JyXsbLwI1l4Ougm69z82I"
 
 # Simulation / Dry Run mode (safe mode for testing without real card debit)
-SIMULATION_MODE = os.getenv("SIMULATION_MODE", "True").lower() in ("true", "1", "yes")
+SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False").lower() in ("true", "1", "yes")
 
 # Application Environment
 ENV = os.getenv("ENV", "production").lower()
@@ -31,8 +31,11 @@ HEADLESS = os.getenv("HEADLESS", "True").lower() in ("true", "1", "yes")
 BROWSER_TIMEOUT_MS = int(os.getenv("BROWSER_TIMEOUT_MS", "45000"))
 
 # Rooter Account Credentials / Auth Details
-ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "").strip()
-ROOTER_AUTH_TOKEN = os.getenv("ROOTER_AUTH_TOKEN", "").strip()
+ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "916265656481").strip()
+ROOTER_AUTH_TOKEN = os.getenv(
+    "ROOTER_AUTH_TOKEN",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjIxMDQ2NjM3NzMsInNJZCI6IjVkMWYyNDZiLWMyMTQtNDk2Mi1iMGM3LTQ5MGU0N2I4OGM3NyIsInJvbGVzIjpbXSwiZGV2aWNlIjoid2ViIiwic2ZDcmVhdGVkQXQiOjE3OTIwMzY0MTAsImlzVmVyaWZpZWQiOnRydWUsInVzZXJSb2xlcyI6e30sImlhdCI6MTc5MjAzNjg3OSwiZXhwIjoxNzk1OTI0ODc5fQ.kVdk_tDxFgl8jU0J8J35KQHRFiKJ4rDhSfkMl4YN2jQ"
+).strip()
 
 # Directories
 SESSION_DIR = BASE_DIR / "sessions"

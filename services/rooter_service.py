@@ -351,14 +351,21 @@ class RooterService(BasePlatform):
                 await buy_btn.click()
                 await page.wait_for_timeout(1500)
 
-            # Check if Delivery Details modal is visible
-            delivery_modal = page.locator("text='Delivery Details', div[role='dialog']:has-text('Delivery Details')").first
-            if await delivery_modal.is_visible(timeout=2500):
+            # Check if Delivery Details modal is visible or multiple 'Pay via wallet' buttons exist
+            pay_buttons = page.locator("button:has-text('Pay via wallet')")
+            delivery_modal = page.locator("text='Delivery Details', div[class*='Modal'], .mantine-Modal-content, div[role='dialog']").first
+            has_modal = False
+            try:
+                has_modal = (await delivery_modal.is_visible(timeout=2500)) or (await pay_buttons.count() > 1)
+            except Exception:
+                has_modal = (await pay_buttons.count() > 1)
+
+            if has_modal:
                 if progress_callback:
                     await progress_callback("Confirming Delivery Details & submitting order...", "📝")
                 logger.info("[Rooter] Delivery Details modal detected. Clicking Pay via wallet inside modal...")
-                modal_pay_btn = page.locator("div[role='dialog'] button:has-text('Pay via wallet'), div[class*='modal'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
-                if await modal_pay_btn.is_visible(timeout=2000):
+                modal_pay_btn = page.locator(".mantine-Modal-content button:has-text('Pay via wallet'), div[role='dialog'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
+                if await modal_pay_btn.is_visible(timeout=2500):
                     await modal_pay_btn.click()
                     await page.wait_for_timeout(4000)
 

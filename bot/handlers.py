@@ -591,35 +591,14 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id if update.effective_user else 0
     query = update.callback_query
 
-    # Check if this user already has an active sniper running
+    # If a sniper is already running for this user, cancel it to allow starting fresh
     if user_id in ACTIVE_SNIPERS:
-        s_data = ACTIVE_SNIPERS[user_id]
-        p_name = config.PLATFORMS.get(s_data["platform"], {}).get("name", s_data["platform"].title())
-        msg = (
-            f"🎯 <b>Auto-Sniper is Already Running!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Platform:</b> {p_name}\n"
-            f"• <b>Voucher:</b> PlayStation ₹{s_data['denomination']:,}\n"
-            f"• <b>Page Refreshes:</b> <code>{s_data.get('attempts', 0)}</code>\n"
-            f"• <b>Status:</b> 🔄 Active & Monitoring stock\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Jaise hi PlayStation code stock me aayega, bot turant buy kar lega!\n"
-            f"Agar aap sniper ko rokna chahte hain to neeche button dabayein:"
-        )
-        if query:
-            await query.answer()
-            await query.edit_message_text(
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_stop_snipe_keyboard(),
-            )
-        else:
-            await update.message.reply_text(
-                text=msg,
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_stop_snipe_keyboard(),
-            )
-        return ConversationHandler.END
+        old_sniper = ACTIVE_SNIPERS.pop(user_id)
+        if old_sniper.get("stop_event"):
+            old_sniper["stop_event"].set()
+        if old_sniper.get("task") and not old_sniper["task"].done():
+            old_sniper["task"].cancel()
+        logger.info(f"Previous sniper task cancelled for user {user_id} to start fresh sniper.")
 
     context.user_data["snipe_platform"] = "rooter"
     has_session = browser_manager.has_session(user_id, "rooter")
@@ -680,7 +659,13 @@ async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFA
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
-        return ConversationHandler.END
+    # Cancel any previous running sniper
+    if user_id in ACTIVE_SNIPERS:
+        old_sniper = ACTIVE_SNIPERS.pop(user_id)
+        if old_sniper.get("stop_event"):
+            old_sniper["stop_event"].set()
+        if old_sniper.get("task") and not old_sniper["task"].done():
+            old_sniper["task"].cancel()
 
     stop_event = asyncio.Event()
 
