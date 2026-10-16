@@ -466,7 +466,7 @@ async def run_sniper_loop(
                     except Exception:
                         pass
 
-            if attempts == 1 and not is_in_stock:
+            if attempts == 1 and not is_in_stock and denomination >= 1000:
                 try:
                     await bot.send_message(
                         chat_id=chat_id,

@@ -204,37 +204,38 @@ class RooterService(BasePlatform):
             target_url = prod_info["url"]
 
             if target_url not in page.url:
-                await page.goto(target_url, timeout=20000)
-                await page.wait_for_load_state("domcontentloaded")
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
                 await page.wait_for_timeout(1000)
             else:
-                await page.reload(timeout=20000)
-                await page.wait_for_load_state("domcontentloaded")
+                await page.reload(wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
                 await page.wait_for_timeout(800)
 
             # A. Google Play Recharge Code (₹10 Test Buy)
             if prod_info["type"] == "google_play":
-                # Ensure denomination card is clicked if available
-                opt_10 = page.locator("div, span, button").filter(has_text=re.compile(rf"^₹?\s*{denomination}(?:\s|$)", re.IGNORECASE)).first
-                if await opt_10.is_visible(timeout=1000):
-                    await opt_10.click()
-                    await page.wait_for_timeout(400)
-
-                # Check if bottom action button is active (Pay ₹8 / Pay Now / Buy Now)
-                action_btn = page.locator("button:has-text('Pay'), button:has-text('Buy Now'), button:has-text('Proceed')").first
-                if await action_btn.is_visible(timeout=2000):
-                    btn_text = await action_btn.inner_text()
-                    if "out of stock" not in btn_text.lower():
-                        logger.info(f"🚨 [Rooter] IN STOCK: Google Play ₹{denomination} is active ({btn_text})!")
+                try:
+                    btn = await page.wait_for_selector(
+                        "button:has-text('Pay via wallet'), button:has-text('Pay'), button:has-text('Buy Now'), button:has-text('Out of Stock')",
+                        timeout=12000
+                    )
+                    if btn:
+                        txt = await btn.inner_text()
+                        if "out of stock" in txt.lower():
+                            logger.info("[Rooter] Google Play is Out of Stock.")
+                            return False
+                        logger.info(f"🚨 [Rooter] IN STOCK: Google Play ₹{denomination} is active ({txt.strip()})!")
                         return True
-
-                out_btn = page.locator("button:has-text('Out of Stock')").first
-                if await out_btn.is_visible(timeout=1000):
+                except Exception as be:
+                    logger.warning(f"Could not find Google Play action button: {be}")
                     return False
-                return True
+                return False
 
             # B. PlayStation Gift Cards (₹1,000 to ₹5,000)
             else:
+                try:
+                    await page.wait_for_selector("div:has-text('Wallet Code')", timeout=12000)
+                except Exception:
+                    pass
+
                 denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
                 if await denom_opt.count() == 0:
                     denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
@@ -253,18 +254,17 @@ class RooterService(BasePlatform):
                     await page.wait_for_timeout(600)
 
                     # Check bottom action button
-                    bottom_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay')").first
-                    if await bottom_btn.is_visible(timeout=2000):
-                        btn_text = await bottom_btn.inner_text()
-                        if "out of stock" not in btn_text.lower():
-                            logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
-                            return True
+                    try:
+                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=6000)
+                        if bottom_btn:
+                            btn_text = await bottom_btn.inner_text()
+                            if "out of stock" not in btn_text.lower():
+                                logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
+                                return True
+                    except Exception:
+                        pass
 
-                    out_btn = page.locator("button:has-text('Out of Stock')").first
-                    if await out_btn.is_visible(timeout=1000):
-                        return False
-
-                    return True
+                    return False
 
                 logger.warning(f"[Rooter] Could not locate option card for ₹{denomination}")
                 return False
@@ -289,16 +289,13 @@ class RooterService(BasePlatform):
             if target_url not in page.url:
                 if progress_callback:
                     await progress_callback(f"Navigating to {prod_name} page...", "🔍")
-                await page.goto(target_url, timeout=config.BROWSER_TIMEOUT_MS)
-                await page.wait_for_load_state("domcontentloaded")
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
                 await page.wait_for_timeout(1000)
 
             # 1. Select the specific denomination
             if prod_info["type"] == "google_play":
-                opt_10 = page.locator("div, span, button").filter(has_text=re.compile(rf"^₹?\s*{denomination}(?:\s|$)", re.IGNORECASE)).first
-                if await opt_10.is_visible(timeout=1000):
-                    await opt_10.click()
-                    await page.wait_for_timeout(500)
+                # Default selection on Google Play product page is already ₹10
+                pass
             else:
                 denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
                 if await denom_opt.count() == 0:
