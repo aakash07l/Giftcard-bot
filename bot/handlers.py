@@ -424,6 +424,21 @@ async def run_sniper_loop(
             apply_storage_state=True,
         )
         page = await browser_context.new_page()
+        prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
+        redeem_tip = "Redeem this code in Google Play Store." if denomination < 1000 else "Redeem this immediately on your PlayStation console or app."
+
+        # Send immediate live confirmation to Telegram chat
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"🔍 <b>Sniper Active:</b> Opening Rooter Shop to inspect <b>{prod_name} ₹{denomination:,}</b>...\n"
+                    f"⚡ <i>Available hote hi 1 second me instant auto-buy karega!</i>"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as me:
+            logger.warning(f"Could not send sniper start message: {me}")
 
         while not stop_event.is_set():
             attempts += 1
@@ -441,10 +456,30 @@ async def run_sniper_loop(
                 is_in_stock = await service.check_is_in_stock(page, denomination)
             except Exception as e:
                 logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
+                if attempts == 1:
+                    try:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ Rooter page notice: <code>{html.escape(str(e)[:100])}</code>. Continuing check...",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+
+            if attempts == 1 and not is_in_stock:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"ℹ️ <b>Stock Status:</b> {prod_name} ₹{denomination:,} abhi Rooter par <b>Out of Stock</b> hai.\n"
+                            f"🔄 <i>Monitoring actively every {config.SNIPE_INTERVAL_SECONDS}s. Jaise hi restock hoga, turant buy kar lega!</i>"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
 
             if is_in_stock:
-                prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
-                redeem_tip = "Redeem this code in Google Play Store." if denomination < 1000 else "Redeem this immediately on your PlayStation console or app."
                 logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED for {prod_name} ₹{denomination} on {platform}!")
 
                 # Notify Telegram user immediately
