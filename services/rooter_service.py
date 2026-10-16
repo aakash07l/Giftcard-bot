@@ -346,10 +346,21 @@ class RooterService(BasePlatform):
                 await progress_callback(f"Clicking Buy / Pay on {prod_name}...", "🛒")
 
             # Click active Buy Now / Proceed / Pay button
-            buy_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay')").first
+            buy_btn = page.locator("button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay')").first
             if await buy_btn.is_visible(timeout=3000):
                 await buy_btn.click()
                 await page.wait_for_timeout(1500)
+
+            # Check if Delivery Details modal is visible
+            delivery_modal = page.locator("text='Delivery Details', div[role='dialog']:has-text('Delivery Details')").first
+            if await delivery_modal.is_visible(timeout=2500):
+                if progress_callback:
+                    await progress_callback("Confirming Delivery Details & submitting order...", "📝")
+                logger.info("[Rooter] Delivery Details modal detected. Clicking Pay via wallet inside modal...")
+                modal_pay_btn = page.locator("div[role='dialog'] button:has-text('Pay via wallet'), div[class*='modal'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
+                if await modal_pay_btn.is_visible(timeout=2000):
+                    await modal_pay_btn.click()
+                    await page.wait_for_timeout(4000)
 
             # Close coupon or offer popup if shown
             close_coupon = page.locator("button:has-text('Skip'), svg[class*='close'], button[aria-label*='Close']").first
@@ -367,8 +378,8 @@ class RooterService(BasePlatform):
                 await page.wait_for_timeout(500)
 
             # Confirm payment / final proceed button
-            confirm_pay = page.locator("button:has-text('Pay Now'), button:has-text('Proceed to Pay'), button:has-text('Confirm'), button:has-text('Pay')").first
-            if await confirm_pay.is_visible(timeout=3000):
+            confirm_pay = page.locator("button:has-text('Pay via wallet'), button:has-text('Pay Now'), button:has-text('Proceed to Pay'), button:has-text('Confirm')").last
+            if await confirm_pay.is_visible(timeout=2000):
                 if progress_callback:
                     await progress_callback("Submitting payment with Rooter balance...", "💳")
                 await confirm_pay.click()
@@ -411,8 +422,8 @@ class RooterService(BasePlatform):
                     error_screenshot=shot_path,
                 )
 
-            # Search for Code, PIN, Order ID
-            code_match = re.search(r"(?:Code|Voucher|Key|Redeem\s*Code)[\s:]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
+            # Search for Code, PIN, Order ID on current page
+            code_match = re.search(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
             if not code_match and prod_info["type"] == "google_play":
                 gp_match = re.search(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", body_content, re.IGNORECASE)
                 if not gp_match:
@@ -421,11 +432,46 @@ class RooterService(BasePlatform):
                     code_match = gp_match
 
             pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", body_content, re.IGNORECASE)
-            order_match = re.search(r"(?:Order\s*ID|Txn\s*ID|Reference)[\s:]+([A-Z0-9#-]+)", body_content, re.IGNORECASE)
+            order_match = re.search(r"(?:Order\s*Id|Txn\s*ID|Reference)[\s:]*#?([A-Z0-9_-]+)", body_content, re.IGNORECASE)
 
             # Success indicators
-            success_indicators = ["order placed", "order successful", "purchase successful", "transaction successful", "thank you", "congratulations", "redeem code"]
+            success_indicators = [
+                "delivered successfully", "items delivered", "item purchased", "coupon codes",
+                "paid amount", "order placed", "order successful", "purchase successful",
+                "transaction successful", "thank you", "congratulations", "redeem code"
+            ]
             is_successful_order = any(ind in body_content.lower() for ind in success_indicators) or (code_match is not None)
+
+            # If code was not found directly on post-checkout page, auto-fetch from Rooter profile/orders
+            if not code_match:
+                try:
+                    logger.info("[Rooter] Checking profile/orders to extract latest voucher code...")
+                    await page.goto("https://shop.rooter.gg/profile/orders", wait_until="domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(2500)
+
+                    # Click top order card to view coupon code
+                    order_card = page.locator("text='Google Play Recharge Code', text='PlayStation Gift Card', div[class*='order']").first
+                    if await order_card.is_visible(timeout=3000):
+                        await order_card.click()
+                        await page.wait_for_timeout(2000)
+
+                    orders_body = await page.locator("body").inner_text()
+                    code_match = re.search(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", orders_body, re.IGNORECASE)
+                    if not code_match and prod_info["type"] == "google_play":
+                        code_match = re.search(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", orders_body, re.IGNORECASE)
+                        if not code_match:
+                            code_match = re.search(r"\b([A-Z0-9]{16})\b", orders_body)
+
+                    if not pin_match:
+                        pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", orders_body, re.IGNORECASE)
+                    if not order_match:
+                        order_match = re.search(r"(?:Order\s*Id|Txn\s*ID|Reference)[\s:]*#?([A-Z0-9_-]+)", orders_body, re.IGNORECASE)
+
+                    if code_match or any(ind in orders_body.lower() for ind in success_indicators):
+                        is_successful_order = True
+                        shot_path = await browser_manager.capture_screenshot(page, f"order_{prod_info['type']}_{denomination}")
+                except Exception as oe:
+                    logger.warning(f"[Rooter] Could not auto-fetch from profile/orders: {oe}")
 
             if not is_successful_order and not code_match:
                 return PurchaseResult(

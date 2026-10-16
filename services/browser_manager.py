@@ -6,6 +6,8 @@ Handles headless Chromium instances, session storage_state, anti-detect headers,
 import os
 import json
 import logging
+import urllib.parse
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -14,6 +16,19 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 import config
 
 logger = logging.getLogger(__name__)
+
+def extract_user_id_from_jwt(token: str) -> int:
+    """Safely extracts Rooter userId from JWT payload."""
+    try:
+        parts = token.split(".")
+        if len(parts) >= 2:
+            padding = "=" * (-len(parts[1]) % 4)
+            payload_str = base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8")
+            data = json.loads(payload_str)
+            return int(data.get("userId", 2104663773))
+    except Exception:
+        pass
+    return 2104663773
 
 # Modern Chrome User Agent
 DEFAULT_USER_AGENT = (
@@ -116,10 +131,6 @@ class BrowserManager:
             if s_file.exists():
                 storage_path = str(s_file)
 
-        extra_http_headers = {}
-        if active_token:
-            extra_http_headers["authorization"] = f"Bearer {active_token}"
-
         context = await self._browser.new_context(
             storage_state=storage_path,
             user_agent=DEFAULT_USER_AGENT,
@@ -128,7 +139,6 @@ class BrowserManager:
             geolocation={"latitude": 28.6304, "longitude": 77.2177},
             locale="en-IN",
             timezone_id="Asia/Kolkata",
-            extra_http_headers=extra_http_headers if extra_http_headers else None,
         )
 
         # Block media resources (images, fonts, videos) to drastically save RAM, CPU, and Railway bandwidth
@@ -151,12 +161,23 @@ class BrowserManager:
             };
         """
         if active_token:
+            uid = extract_user_id_from_jwt(active_token)
+            auth_obj = {
+                "accessToken": active_token,
+                "refreshToken": active_token,
+                "userId": uid,
+                "country": "IN",
+                "deviceId": "web-browser",
+                "deviceType": "web",
+                "appVersion": "1.0.0"
+            }
+            auth_str = json.dumps(auth_obj).replace("'", "\\'")
             init_script += f"""
                 try {{
+                    localStorage.setItem('user_auth', '{auth_str}');
                     localStorage.setItem('rooter_token', '{active_token}');
                     localStorage.setItem('token', '{active_token}');
                     localStorage.setItem('authToken', '{active_token}');
-                    localStorage.setItem('user_auth', '{active_token}');
                     localStorage.setItem('auth_token', '{active_token}');
                 }} catch (e) {{}}
             """
@@ -166,14 +187,22 @@ class BrowserManager:
         # Inject auth cookies for Rooter so backend API and wallet recognize authenticated session
         if platform == "rooter" and active_token:
             try:
+                uid = extract_user_id_from_jwt(active_token)
+                auth_data = {
+                    "accessToken": active_token,
+                    "refreshToken": active_token,
+                    "userId": uid,
+                    "country": "IN",
+                    "deviceId": "web-browser",
+                    "deviceType": "web",
+                    "appVersion": "1.0.0"
+                }
+                encoded_auth = urllib.parse.quote(json.dumps(auth_data))
                 await context.add_cookies([
-                    {"name": "user_auth", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": encoded_auth, "domain": ".rooter.gg", "path": "/"},
                     {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "user_auth", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
-                    {"name": "token", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
                 ])
             except Exception as e:
                 logger.warning(f"Failed to inject Rooter cookies: {e}")
