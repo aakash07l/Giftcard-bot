@@ -94,7 +94,11 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
         platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
-    rows = []
+    rows = [
+        [
+            InlineKeyboardButton("⚡ Any PlayStation Card (Jo Bhi Stock Me Aaye)", callback_data="snipe_denom:rooter:0")
+        ]
+    ]
     # Test buy button for ₹10 Google Play Code
     if 10 in denominations:
         rows.append([

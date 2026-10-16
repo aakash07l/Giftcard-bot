@@ -29,7 +29,7 @@ class RooterService(BasePlatform):
 
     def get_product_info(self, denomination: int) -> dict:
         """Returns product url, name, and type based on denomination."""
-        if denomination < 1000:
+        if denomination == 10:
             return {
                 "type": "google_play",
                 "name": "Google Play Recharge Code",
@@ -40,7 +40,7 @@ class RooterService(BasePlatform):
             "type": "playstation",
             "name": "PlayStation Gift Card",
             "url": self.playstation_url,
-            "expected_price": float(denomination),
+            "expected_price": float(denomination) if denomination > 0 else 1000.0,
         }
 
     async def check_login_status(self, page: Page) -> bool:
@@ -207,6 +207,68 @@ class RooterService(BasePlatform):
                 await page.wait_for_timeout(300)
         except Exception:
             pass
+
+    async def find_available_playstation_denomination(self, page: Page) -> Optional[int]:
+        """Finds the first PlayStation denomination currently in stock on Rooter (checks ₹1,000 to ₹5,000)."""
+        try:
+            target_url = self.playstation_url
+            if target_url not in page.url:
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
+                await page.wait_for_timeout(1000)
+            else:
+                await page.reload(wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
+                await page.wait_for_timeout(800)
+
+            # Auto-dismiss region popup if present
+            await self.dismiss_location_popup(page)
+
+            try:
+                await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
+            except Exception:
+                pass
+
+            await self.dismiss_location_popup(page)
+
+            supported = [1000, 2000, 3000, 4000, 5000]
+            for d in supported:
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
+                if await denom_opt.count() == 0:
+                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
+
+                if await denom_opt.count() > 0:
+                    target_card = denom_opt.last
+                    card_text = await target_card.inner_text()
+
+                    # Check for out of stock indicator
+                    if "out of stock" not in card_text.lower():
+                        logger.info(f"🚨 [Rooter] In-stock candidate card found: ₹{d}!")
+                        # Click to select denomination with force=True and short timeout
+                        try:
+                            await target_card.click(force=True, timeout=2000)
+                        except Exception:
+                            try:
+                                await target_card.dispatch_event("click")
+                            except Exception:
+                                pass
+                        await page.wait_for_timeout(300)
+
+                        # Check bottom action button
+                        try:
+                            bottom_btn = await page.wait_for_selector(
+                                "button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')",
+                                timeout=4000
+                            )
+                            if bottom_btn:
+                                btn_text = await bottom_btn.inner_text()
+                                if "out of stock" not in btn_text.lower():
+                                    logger.info(f"🚨 [Rooter] CONFIRMED IN STOCK: PlayStation ₹{d} button is active ({btn_text})!")
+                                    return d
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"Error checking any PlayStation stock: {e}")
+
+        return None
 
     async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
         """Accurate, denomination-specific check on Rooter product pages."""
