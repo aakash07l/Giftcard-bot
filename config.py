@@ -60,10 +60,10 @@ PLATFORMS = {
     },
     "rooter": {
         "name": "Rooter Shop",
-        "url": "https://shop.rooter.gg",
+        "url": "https://shop.rooter.gg/product/playstation-gift-cards",
         "search_query": "PlayStation",
         "description": "Gaming and esports voucher marketplace",
-        "supported_denominations": [500, 1000, 2500, 4000],
+        "supported_denominations": [1000, 2000, 3000, 4000, 5000],
     },
 }
 

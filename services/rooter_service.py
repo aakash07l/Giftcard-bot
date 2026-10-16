@@ -23,6 +23,7 @@ class RooterService(BasePlatform):
             name="Rooter",
             base_url="https://shop.rooter.gg"
         )
+        self.product_url = "https://shop.rooter.gg/product/playstation-gift-cards"
 
     async def check_login_status(self, page: Page) -> bool:
         """Verifies if user is logged into Rooter."""
@@ -116,64 +117,103 @@ class RooterService(BasePlatform):
         denomination: Optional[int] = None,
         progress_callback: Optional[ProgressCallback] = None,
     ) -> List[CardItem]:
-        """Navigates to Rooter Shop and looks for PlayStation Wallet vouchers."""
+        """Navigates directly to Rooter PlayStation gift cards page and checks available options."""
         if progress_callback:
-            await progress_callback("Navigating to Rooter Shop...", "🔍")
+            await progress_callback("Opening Rooter PlayStation Gift Cards page...", "🔍")
 
-        await page.goto(self.base_url, timeout=config.BROWSER_TIMEOUT_MS)
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(1500)
-
-        if progress_callback:
-            await progress_callback("Searching Rooter gaming vouchers for PlayStation...", "🔎")
+        target_url = getattr(self, "product_url", "https://shop.rooter.gg/product/playstation-gift-cards")
+        if target_url not in page.url:
+            await page.goto(target_url, timeout=config.BROWSER_TIMEOUT_MS)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1000)
 
         cards: List[CardItem] = []
+        supported = [1000, 2000, 3000, 4000, 5000]
 
-        # Try search bar if present
-        search_input = page.locator("input[placeholder*='Search'], input[type='search']").first
-        if await search_input.is_visible(timeout=2000):
-            await search_input.fill("PlayStation")
-            await search_input.press("Enter")
-            await page.wait_for_timeout(1500)
+        for d in supported:
+            # Check for denomination option element e.g. "Rs.1000 Wallet Code"
+            opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
+            in_stock = False
 
-        # Scrape item cards
-        items = page.locator("div[class*='VoucherCard'], div[class*='shop-item'], div[class*='reward-card']")
-        count = await items.count()
+            try:
+                if await opt_locator.count() > 0:
+                    parent_text = await opt_locator.first.locator("xpath=..").inner_text()
+                    # An option is out of stock if its specific card text container has 'out of stock'
+                    in_stock = "out of stock" not in parent_text.lower()
+                else:
+                    simple_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
+                    if await simple_opt.count() > 0:
+                        in_stock = "out of stock" not in (await simple_opt.first.inner_text()).lower()
+            except Exception:
+                in_stock = False
 
-        for i in range(count):
-            item = items.nth(i)
-            text = await item.inner_text()
-            if "playstation" in text.lower() or "psn" in text.lower():
-                denom_match = re.search(r"₹\s*([0-9,]+)", text)
-                extracted_price = int(denom_match.group(1).replace(",", "")) if denom_match else (denomination or 1000)
-                in_stock = "out of stock" not in text.lower() and "sold out" not in text.lower()
-
-                cards.append(CardItem(
-                    title=f"Rooter PlayStation Voucher ₹{extracted_price:,}",
-                    denomination=extracted_price,
-                    price=float(extracted_price),
-                    platform="rooter",
-                    in_stock=in_stock,
-                ))
-
-        # If cards list is empty or page indicates Out of Stock
-        if not cards:
-            body_text = await page.locator("body").inner_text()
-            is_out_of_stock = "out of stock" in body_text.lower() or "sold out" in body_text.lower()
-            logger.info(f"Rooter Shop catalog status: out_of_stock={is_out_of_stock}")
-            for d in config.PLATFORMS["rooter"]["supported_denominations"]:
-                cards.append(CardItem(
-                    title=f"Rooter PlayStation Voucher ₹{d:,}",
-                    denomination=d,
-                    price=float(d),
-                    platform="rooter",
-                    in_stock=not is_out_of_stock,
-                ))
+            cards.append(CardItem(
+                title=f"Rooter PlayStation Voucher ₹{d:,}",
+                denomination=d,
+                price=float(d),
+                platform="rooter",
+                in_stock=in_stock,
+            ))
 
         if denomination:
             cards = [c for c in cards if c.denomination == denomination]
 
         return cards
+
+    async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
+        """Accurate, denomination-specific check on Rooter PlayStation product page."""
+        try:
+            target_url = getattr(self, "product_url", "https://shop.rooter.gg/product/playstation-gift-cards")
+            if target_url not in page.url:
+                await page.goto(target_url, timeout=20000)
+                await page.wait_for_load_state("domcontentloaded")
+                await page.wait_for_timeout(1000)
+            else:
+                await page.reload(timeout=20000)
+                await page.wait_for_load_state("domcontentloaded")
+                await page.wait_for_timeout(800)
+
+            # Find specific denomination block e.g. "Rs.1000 Wallet Code"
+            denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
+            if await denom_opt.count() == 0:
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+
+            if await denom_opt.count() > 0:
+                target_card = denom_opt.last
+                card_text = await target_card.inner_text()
+
+                # If this specific denomination card says 'out of stock', it is out of stock
+                if "out of stock" in card_text.lower():
+                    logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
+                    return False
+
+                # Denomination option is NOT marked out of stock! Click to select it:
+                await target_card.click()
+                await page.wait_for_timeout(600)
+
+                # Check the main bottom action button
+                # When stock is available and selected, button turns to "Buy Now" or "Proceed" or "Pay"
+                bottom_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay')").first
+                if await bottom_btn.is_visible(timeout=2000):
+                    btn_text = await bottom_btn.inner_text()
+                    if "out of stock" not in btn_text.lower():
+                        logger.info(f"🚨 [Rooter] IN STOCK: ₹{denomination} button is active ({btn_text})!")
+                        return True
+
+                # If the main button still says "Out of Stock"
+                out_btn = page.locator("button:has-text('Out of Stock')").first
+                if await out_btn.is_visible(timeout=1000):
+                    return False
+
+                # If no out of stock indicator found on this denomination, treat as available
+                return True
+
+            logger.warning(f"[Rooter] Could not locate option card for ₹{denomination}")
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error checking Rooter stock: {e}")
+            return False
 
     async def execute_buy_flow(
         self,
@@ -182,39 +222,44 @@ class RooterService(BasePlatform):
         progress_callback: Optional[ProgressCallback] = None,
         simulation: bool = False,
     ) -> PurchaseResult:
-        """Completes automated voucher redemption or purchase on Rooter."""
+        """Completes automated voucher purchase on Rooter with Rooter Wallet balance."""
         try:
-            cards = await self.search_playstation_cards(page, denomination=denomination, progress_callback=progress_callback)
-
-            in_stock_card = next((c for c in cards if c.in_stock), None)
-            if not in_stock_card:
+            target_url = getattr(self, "product_url", "https://shop.rooter.gg/product/playstation-gift-cards")
+            if target_url not in page.url:
                 if progress_callback:
-                    await progress_callback(f"PlayStation ₹{denomination:,} card is Out of Stock on Rooter!", "⚠️")
+                    await progress_callback("Navigating to PlayStation product page...", "🔍")
+                await page.goto(target_url, timeout=config.BROWSER_TIMEOUT_MS)
+                await page.wait_for_load_state("domcontentloaded")
+                await page.wait_for_timeout(1000)
+
+            # 1. Select the specific denomination card
+            denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
+            if await denom_opt.count() == 0:
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+
+            if await denom_opt.count() > 0:
+                await denom_opt.last.click()
+                await page.wait_for_timeout(600)
+
+            # 2. Check if main action button is disabled / Out of Stock
+            out_btn = page.locator("button:has-text('Out of Stock')").first
+            if await out_btn.is_visible(timeout=1500):
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=denomination,
-                    message=f"PlayStation Gift Card (₹{denomination:,}) is currently OUT OF STOCK on Rooter Shop. Please try Blinkit instead!",
+                    message=f"PlayStation ₹{denomination:,} was caught by someone else or went out of stock right before checkout!",
                 )
 
-            if progress_callback:
-                await progress_callback("Adding PlayStation voucher to cart...", "🛒")
-
-            # Click voucher / redeem button
-            redeem_btn = page.locator("button:has-text('Redeem'), button:has-text('Buy Now'), button:has-text('Claim')").first
-            if await redeem_btn.is_visible(timeout=3000):
-                await redeem_btn.click()
-                await page.wait_for_timeout(1000)
-
-            # Check simulation mode
+            # 3. Handle Simulation Mode
             if simulation:
                 if progress_callback:
-                    await progress_callback("SIMULATION MODE: Rooter order verified! Generating mock voucher code...", "💳")
-                await page.wait_for_timeout(2000)
+                    await progress_callback("SIMULATION MODE: Voucher stock verified! Simulating dry-run purchase...", "💳")
+                await page.wait_for_timeout(1500)
 
                 mock_code = f"ROTR-PSN-{denomination}-{hash(page) % 90000 + 10000}"
                 mock_pin = f"{hash(page) % 9000 + 1000}"
-                mock_order = f"RTR-ORD-{asyncio.get_event_loop().time():.0f}"
+                mock_order = f"RTR-ORD-{int(asyncio.get_event_loop().time())}"
 
                 return PurchaseResult(
                     success=True,
@@ -223,47 +268,74 @@ class RooterService(BasePlatform):
                     voucher_code=mock_code,
                     voucher_pin=mock_pin,
                     order_id=mock_order,
-                    receipt_summary=f"Rooter Gaming Rewards - 1x PlayStation Network ₹{denomination:,}",
-                    message="Purchase flow simulated successfully in dry-run mode.",
+                    receipt_summary=f"Rooter PlayStation Voucher ₹{denomination:,} [SIMULATION]",
+                    message="Purchase flow simulated successfully in dry-run mode. Turn off SIMULATION_MODE to purchase with real balance.",
                     simulation=True,
                 )
 
+            # 4. Live Purchase Execution
             if progress_callback:
-                await progress_callback("Completing purchase & verifying payment on Rooter...", "💳")
+                await progress_callback("Clicking Buy Now & preparing checkout...", "🛒")
 
-            confirm_checkout = page.locator("button:has-text('Confirm'), button:has-text('Pay Now'), button:has-text('Proceed')").first
-            if await confirm_checkout.is_visible(timeout=5000):
-                await confirm_checkout.click()
+            # Click active Buy Now / Proceed button
+            buy_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay')").first
+            if await buy_btn.is_visible(timeout=3000):
+                await buy_btn.click()
+                await page.wait_for_timeout(1500)
+
+            # Close coupon or offer popup if shown
+            close_coupon = page.locator("button:has-text('Skip'), svg[class*='close'], button[aria-label*='Close']").first
+            if await close_coupon.is_visible(timeout=1500):
+                try:
+                    await close_coupon.click()
+                    await page.wait_for_timeout(500)
+                except Exception:
+                    pass
+
+            # Select Rooter Wallet / Balance payment method if presented
+            wallet_opt = page.locator("div, span, label").filter(has_text=re.compile(r"(?:Rooter\s*Wallet|Wallet\s*Balance|Pay\s*via\s*Wallet|Rooter\s*Pay)", re.IGNORECASE)).first
+            if await wallet_opt.is_visible(timeout=2000):
+                await wallet_opt.click()
+                await page.wait_for_timeout(500)
+
+            # Confirm payment / final proceed button
+            confirm_pay = page.locator("button:has-text('Pay Now'), button:has-text('Proceed to Pay'), button:has-text('Confirm')").first
+            if await confirm_pay.is_visible(timeout=3000):
+                if progress_callback:
+                    await progress_callback("Submitting payment with Rooter balance...", "💳")
+                await confirm_pay.click()
                 await page.wait_for_timeout(4000)
 
-            # Check page content for voucher details OR errors
-            page_content = await page.locator("body").inner_text()
-            
-            # Check for error indicators (insufficient balance, payment failed, etc.)
-            if "insufficient" in page_content.lower() or "low balance" in page_content.lower() or "add coins" in page_content.lower():
+            # Inspect page content for voucher code or errors
+            body_content = await page.locator("body").inner_text()
+
+            # Check for error indicators
+            if "insufficient" in body_content.lower() or "low balance" in body_content.lower():
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=denomination,
-                    message="Insufficient balance in your Rooter wallet. Please add funds/coins to your Rooter account first!",
+                    message="Rooter wallet balance insufficient for this purchase.",
                 )
 
-            code_match = re.search(r"(?:Code|Voucher|Key)[\s:]+([A-Z0-9-]{10,25})", page_content, re.IGNORECASE)
-            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", page_content, re.IGNORECASE)
-            order_match = re.search(r"(?:Order ID|Txn ID|Reference)[\s:]+([A-Z0-9#-]+)", page_content, re.IGNORECASE)
+            code_match = re.search(r"(?:Code|Voucher|Key)[\s:]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
+            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", body_content, re.IGNORECASE)
+            order_match = re.search(r"(?:Order ID|Txn ID|Reference)[\s:]+([A-Z0-9#-]+)", body_content, re.IGNORECASE)
 
             if not code_match:
-                # No voucher was produced - payment was not completed or gateway pending
+                # Capture screenshot for user inspection
+                shot_path = await browser_manager.capture_screenshot(page, "rooter_order_result")
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=denomination,
-                    message="Purchase could not be completed automatically. Rooter requires active wallet balance or manual payment approval (UPI/QR).",
+                    message="Order submitted, but voucher code was not detected on confirmation page. Please check your Rooter profile / Orders tab.",
+                    error_screenshot=shot_path,
                 )
 
             code = code_match.group(1)
             pin = pin_match.group(1) if pin_match else "N/A"
-            order_id = order_match.group(1) if order_match else "Rooter Order"
+            order_id = order_match.group(1) if order_match else f"RTR-{int(asyncio.get_event_loop().time())}"
 
             return PurchaseResult(
                 success=True,
@@ -272,42 +344,18 @@ class RooterService(BasePlatform):
                 voucher_code=code,
                 voucher_pin=pin,
                 order_id=order_id,
-                receipt_summary=f"Rooter Redeemed Voucher - PlayStation ₹{denomination:,}",
-                message="Voucher successfully redeemed on Rooter!",
+                receipt_summary=f"Rooter PlayStation Voucher ₹{denomination:,}",
+                message="Voucher successfully purchased on Rooter with wallet balance!",
                 simulation=False,
             )
 
         except Exception as e:
-            logger.error(f"Rooter purchase failed: {e}", exc_info=True)
+            logger.error(f"Rooter buy flow encountered error: {e}", exc_info=True)
+            shot_path = await browser_manager.capture_screenshot(page, "rooter_buy_error")
             return PurchaseResult(
                 success=False,
                 platform="rooter",
                 denomination=denomination,
-                message=f"Rooter automation encountered an issue: {str(e)}",
+                message=f"Rooter automation error: {str(e)}",
+                error_screenshot=shot_path,
             )
-
-    async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
-        """Fast check to see if PlayStation voucher is currently in stock on Rooter Shop."""
-        try:
-            await page.goto(self.base_url, timeout=20000)
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(1500)
-
-            # Search PlayStation
-            search_input = page.locator("input[placeholder*='Search']").first
-            if await search_input.is_visible(timeout=2000):
-                await search_input.fill("PlayStation")
-                await search_input.press("Enter")
-                await page.wait_for_timeout(2000)
-
-            body_text = await page.locator("body").inner_text()
-            # If all PlayStation items are labeled 'Out of Stock'
-            if "out of stock" in body_text.lower():
-                return False
-
-            # Check if any Redeem or Buy Now button is visible
-            redeem_btn = page.locator("button:has-text('Redeem'), button:has-text('Buy Now'), button:has-text('Claim')").first
-            return await redeem_btn.is_visible(timeout=2000)
-        except Exception as e:
-            logger.warning(f"Error checking Rooter stock: {e}")
-            return False

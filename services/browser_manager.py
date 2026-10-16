@@ -141,6 +141,19 @@ class BrowserManager:
 
         await context.add_init_script(init_script)
 
+        # Inject auth cookies for Rooter so backend API and wallet recognize authenticated session
+        if platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+            try:
+                await context.add_cookies([
+                    {"name": "token", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "rooter_token", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "token", "value": config.ROOTER_AUTH_TOKEN, "domain": "shop.rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": config.ROOTER_AUTH_TOKEN, "domain": "shop.rooter.gg", "path": "/"},
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to inject Rooter cookies: {e}")
+
         return context
 
     async def save_session(self, context: BrowserContext, user_id: int, platform: str):
