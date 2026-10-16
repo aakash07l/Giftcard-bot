@@ -390,13 +390,24 @@ class RooterService(BasePlatform):
                     error_screenshot=shot_path,
                 )
 
-            # Check if login modal unexpectedly appeared (e.g. auth expired)
-            if "login / register" in body_content.lower() or "enter mobile number" in body_content.lower():
+            # Check if login modal unexpectedly appeared (e.g. auth expired or not logged in)
+            is_login_modal = any(
+                p in body_content.lower()
+                for p in [
+                    "login / sign up",
+                    "login / register",
+                    "enter your mobile number",
+                    "enter mobile number",
+                    "continue with google",
+                    "have a referral code",
+                ]
+            )
+            if is_login_modal:
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=denomination,
-                    message="Rooter session expired or not logged in! Please update your Bearer token via /login.",
+                    message="Rooter session expired or not logged in! Rooter login popup appeared. Please send /login to bot and paste your Bearer token, or set ROOTER_AUTH_TOKEN in Railway variables.",
                     error_screenshot=shot_path,
                 )
 

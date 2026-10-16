@@ -254,6 +254,20 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
 
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
 
+    # Pre-flight check: ensure active session exists
+    if not browser_manager.has_session(user_id, platform):
+        await query.edit_message_text(
+            text=(
+                "⚠️ <b>Rooter Account Logged In Nahi Hai!</b>\n\n"
+                "Cloud server restart hone ki wajah se session reset ho gaya hai ya Bearer token missing hai.\n\n"
+                "👉 Kripya pehle <code>/login</code> dabayein aur <b>Paste Bearer Token</b> select karke apna token paste karein.\n\n"
+                "💡 <i>Tip: Railway Variables me <code>ROOTER_AUTH_TOKEN</code> set karne se token kabhi reset nahi hoga!</i>"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return ConversationHandler.END
+
     # Initial live status message
     status_msg = await query.edit_message_text(
         text=f"🔍 <b>Connecting to Playwright Engine for {plat_name}...</b>",
@@ -653,6 +667,20 @@ async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFA
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
+
+    # Pre-flight check: ensure active session exists
+    if not browser_manager.has_session(user_id, platform):
+        await query.edit_message_text(
+            text=(
+                "⚠️ <b>Rooter Account Logged In Nahi Hai!</b>\n\n"
+                "Cloud server restart hone ki wajah se session reset ho gaya hai ya Bearer token missing hai.\n\n"
+                "👉 Kripya pehle <code>/login</code> dabayein aur <b>Paste Bearer Token</b> select karke apna token paste karein.\n\n"
+                "💡 <i>Tip: Railway Variables me <code>ROOTER_AUTH_TOKEN</code> set karne se token kabhi reset nahi hoga!</i>"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return ConversationHandler.END
 
     stop_event = asyncio.Event()
 

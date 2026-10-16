@@ -55,20 +55,49 @@ class BrowserManager:
         """Returns the storage_state file path for a given user and platform."""
         return config.SESSION_DIR / f"user_{user_id}_{platform}.json"
 
-    def has_session(self, user_id: int, platform: str) -> bool:
-        """Checks if a user session file exists or if static AUTH_TOKEN is set in config."""
-        if config.ROOTER_AUTH_TOKEN:
-            return True
+    def get_active_token(self, user_id: Optional[int] = None) -> Optional[str]:
+        """Returns active Bearer token from config, user session, or any stored session file."""
+        if config.ROOTER_AUTH_TOKEN and len(config.ROOTER_AUTH_TOKEN) > 10:
+            return config.ROOTER_AUTH_TOKEN
 
-        session_file = self.get_session_file(user_id, platform)
-        if not session_file.exists():
-            return False
-        try:
-            with open(session_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return bool(data.get("cookies") or data.get("origins"))
-        except Exception:
-            return False
+        # Check user-specific session file
+        if user_id:
+            s_file = self.get_session_file(user_id, "rooter")
+            if s_file.exists():
+                try:
+                    with open(s_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        for c in data.get("cookies", []):
+                            if c.get("name") in ("token", "user_auth", "authToken", "rooter_token"):
+                                val = c.get("value")
+                                if val and len(val) > 10:
+                                    return val
+                        for origin in data.get("origins", []):
+                            for item in origin.get("localStorage", []):
+                                if item.get("name") in ("token", "user_auth", "authToken", "rooter_token", "auth_token"):
+                                    val = item.get("value")
+                                    if val and len(val) > 10:
+                                        return val
+                except Exception:
+                    pass
+
+        # Check any available session files
+        for sf in config.SESSION_DIR.glob("user_*_rooter.json"):
+            try:
+                with open(sf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for c in data.get("cookies", []):
+                        if c.get("name") in ("token", "user_auth", "authToken", "rooter_token"):
+                            val = c.get("value")
+                            if val and len(val) > 10:
+                                return val
+            except Exception:
+                pass
+        return None
+
+    def has_session(self, user_id: int, platform: str) -> bool:
+        """Checks if a user session file exists or if active AUTH_TOKEN is present."""
+        return self.get_active_token(user_id) is not None
 
     async def create_context(
         self,
@@ -79,6 +108,8 @@ class BrowserManager:
         """Creates an authenticated or fresh BrowserContext."""
         await self.initialize()
 
+        active_token = self.get_active_token(user_id)
+
         storage_path = None
         if apply_storage_state and user_id:
             s_file = self.get_session_file(user_id, "rooter")
@@ -86,8 +117,8 @@ class BrowserManager:
                 storage_path = str(s_file)
 
         extra_http_headers = {}
-        if config.ROOTER_AUTH_TOKEN:
-            extra_http_headers["authorization"] = f"Bearer {config.ROOTER_AUTH_TOKEN}"
+        if active_token:
+            extra_http_headers["authorization"] = f"Bearer {active_token}"
 
         context = await self._browser.new_context(
             storage_state=storage_path,
@@ -119,26 +150,30 @@ class BrowserManager:
                 runtime: {}
             };
         """
-        if config.ROOTER_AUTH_TOKEN:
+        if active_token:
             init_script += f"""
                 try {{
-                    localStorage.setItem('rooter_token', '{config.ROOTER_AUTH_TOKEN}');
-                    localStorage.setItem('token', '{config.ROOTER_AUTH_TOKEN}');
-                    localStorage.setItem('authToken', '{config.ROOTER_AUTH_TOKEN}');
+                    localStorage.setItem('rooter_token', '{active_token}');
+                    localStorage.setItem('token', '{active_token}');
+                    localStorage.setItem('authToken', '{active_token}');
+                    localStorage.setItem('user_auth', '{active_token}');
+                    localStorage.setItem('auth_token', '{active_token}');
                 }} catch (e) {{}}
             """
 
         await context.add_init_script(init_script)
 
         # Inject auth cookies for Rooter so backend API and wallet recognize authenticated session
-        if platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+        if platform == "rooter" and active_token:
             try:
                 await context.add_cookies([
-                    {"name": "token", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "rooter_token", "value": config.ROOTER_AUTH_TOKEN, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "token", "value": config.ROOTER_AUTH_TOKEN, "domain": "shop.rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": config.ROOTER_AUTH_TOKEN, "domain": "shop.rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
+                    {"name": "token", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
                 ])
             except Exception as e:
                 logger.warning(f"Failed to inject Rooter cookies: {e}")
@@ -173,6 +208,7 @@ class BrowserManager:
                             {"name": "auth_token", "value": clean_token},
                             {"name": "rooter_token", "value": clean_token},
                             {"name": "authToken", "value": clean_token},
+                            {"name": "user_auth", "value": clean_token},
                         ]
                     },
                     {
@@ -182,14 +218,17 @@ class BrowserManager:
                             {"name": "auth_token", "value": clean_token},
                             {"name": "rooter_token", "value": clean_token},
                             {"name": "authToken", "value": clean_token},
+                            {"name": "user_auth", "value": clean_token},
                         ]
                     }
                 ]
 
                 cookies = [
+                    {"name": "user_auth", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "authToken", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "rooter_token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "token", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "authToken", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
                 ]
@@ -200,7 +239,10 @@ class BrowserManager:
                 }
                 with open(session_file, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=2)
-                logger.info(f"Saved raw Bearer token for user {user_id} on {platform}")
+
+                # Update in-memory config so all active workers immediately use it!
+                config.ROOTER_AUTH_TOKEN = clean_token
+                logger.info(f"Saved raw Bearer token for user {user_id} on {platform} and updated ROOTER_AUTH_TOKEN")
                 return True
             return False
 
