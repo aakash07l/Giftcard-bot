@@ -64,7 +64,8 @@ def format_status_text(user_id: int) -> str:
     if sniper_info:
         denom_disp = sniper_info["denomination"]
         checks = sniper_info.get("attempts", 0)
-        sniper_text = f"🟢 Active (Rooter ₹{denom_disp:,} - <code>{checks}</code> checks)"
+        p_label = "Google Play ₹10" if denom_disp == 10 else f"PSN ₹{denom_disp:,}"
+        sniper_text = f"🟢 Active ({p_label} - <code>{checks}</code> checks)"
     else:
         sniper_text = "⚪ Inactive"
 
@@ -180,7 +181,8 @@ async def buy_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["buy_platform"] = "rooter"
     msg = (
         "🛒 <b>Instant Buy — Rooter Shop</b>\n\n"
-        "Select the PlayStation Gift Card denomination to buy using your Rooter wallet balance:"
+        "Select the voucher denomination to buy using your Rooter wallet balance:\n"
+        "<i>(Tip: Aap <b>₹10 Google Play Code</b> se 1-time real test buy kar sakte hain!)</i>"
     )
     if query:
         await query.answer()
@@ -215,17 +217,20 @@ async def buy_denomination_selected(update: Update, context: ContextTypes.DEFAUL
 
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
     mode_text = "🧪 SIMULATION (No funds deducted)" if config.SIMULATION_MODE else "⚡ LIVE (Real Checkout)"
+    prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
+    price_tag = "₹8 (from Rooter Wallet)" if denomination == 10 else f"₹{denomination:,}"
 
     await query.edit_message_text(
         text=(
             f"📝 <b>Order Confirmation</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Item:</b> PlayStation Gift Card\n"
+            f"• <b>Item:</b> {prod_name}\n"
             f"• <b>Platform:</b> {plat_name}\n"
             f"• <b>Denomination:</b> ₹{denomination:,}\n"
+            f"• <b>Cost:</b> {price_tag}\n"
             f"• <b>Mode:</b> <code>{mode_text}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Click <b>Confirm & Buy Now</b> to trigger the Playwright automation engine."
+            f"Click <b>Confirm & Buy</b> to trigger the Playwright automation engine."
         ),
         parse_mode=ParseMode.HTML,
         reply_markup=get_confirmation_keyboard(platform, denomination),
@@ -284,6 +289,9 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
             simulation=config.SIMULATION_MODE,
         )
 
+        prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
+        redeem_tip = "Redeem this code in Google Play Store." if denomination < 1000 else "Redeem this on your PlayStation Store console or app."
+
         if result.success:
             sim_badge = " [SIMULATED TEST]" if result.simulation else ""
             v_code = html.escape(result.voucher_code or "")
@@ -293,26 +301,40 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
             success_text = (
                 f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎮 <b>Platform:</b> {plat_name}\n"
+                f"🎯 <b>Platform:</b> {plat_name}\n"
+                f"📦 <b>Item:</b> {prod_name}\n"
                 f"💰 <b>Denomination:</b> ₹{result.denomination:,}\n"
-                f"🔑 <b>Voucher Code:</b>\n<code>{v_code}</code>\n"
+                f"🔑 <b>Voucher / Redeem Code:</b>\n<code>{v_code}</code>\n"
                 f"🔒 <b>PIN / Key:</b>\n<code>{v_pin}</code>\n"
                 f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✨ Redeem this on your PlayStation Store console or app."
+                f"✨ {redeem_tip}"
             )
             await status_msg.edit_text(
                 text=success_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=get_main_menu_keyboard(),
             )
+            # Send confirmation screenshot if available
+            shot_file = result.error_screenshot
+            if shot_file and os.path.exists(shot_file):
+                try:
+                    with open(shot_file, "rb") as photo:
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=photo,
+                            caption=f"📸 Order proof for {prod_name} on {plat_name}",
+                        )
+                except Exception as ex:
+                    logger.debug(f"Could not dispatch screenshot: {ex}")
         else:
             # Capture error screenshot for inspection
-            screenshot_path = await browser_manager.capture_screenshot(page, name_prefix=f"err_{platform}")
+            screenshot_path = result.error_screenshot or await browser_manager.capture_screenshot(page, name_prefix=f"err_{platform}")
 
             fail_text = (
                 f"⚠️ <b>Notice: Purchase Flow Stopped</b>\n\n"
                 f"• <b>Platform:</b> {plat_name}\n"
+                f"• <b>Item:</b> {prod_name}\n"
                 f"• <b>Reason:</b> {html.escape(result.message)}\n\n"
             )
 
@@ -407,7 +429,9 @@ async def run_sniper_loop(
                 logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
 
             if is_in_stock:
-                logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED for PlayStation ₹{denomination} on {platform}!")
+                prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
+                redeem_tip = "Redeem this code in Google Play Store." if denomination < 1000 else "Redeem this immediately on your PlayStation console or app."
+                logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED for {prod_name} ₹{denomination} on {platform}!")
 
                 # Notify Telegram user immediately
                 try:
@@ -415,9 +439,10 @@ async def run_sniper_loop(
                         chat_id=chat_id,
                         text=(
                             f"🚨 <b>STOCK DETECTED!</b>\n\n"
-                            f"🎮 <b>Platform:</b> {plat_name}\n"
-                            f"💰 <b>Voucher:</b> PlayStation ₹{denomination:,}\n\n"
-                            f"⚡ <b>Executing instant 1-click buy now...</b>"
+                            f"🎯 <b>Platform:</b> {plat_name}\n"
+                            f"📦 <b>Item:</b> {prod_name}\n"
+                            f"💰 <b>Denomination:</b> ₹{denomination:,}\n\n"
+                            f"⚡ <b>Executing instant 1-click buy with wallet balance...</b>"
                         ),
                         parse_mode=ParseMode.HTML,
                     )
@@ -440,14 +465,15 @@ async def run_sniper_loop(
                     success_text = (
                         f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎮 <b>Platform:</b> {plat_name}\n"
+                        f"🎯 <b>Platform:</b> {plat_name}\n"
+                        f"📦 <b>Item:</b> {prod_name}\n"
                         f"💰 <b>Denomination:</b> ₹{result.denomination:,}\n"
-                        f"🔑 <b>Voucher Code:</b>\n<code>{v_code}</code>\n"
+                        f"🔑 <b>Voucher / Redeem Code:</b>\n<code>{v_code}</code>\n"
                         f"🔒 <b>PIN / Key:</b>\n<code>{v_pin}</code>\n"
                         f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"✨ <i>Auto-Sniper successfully caught the stock and secured your PlayStation code!</i>\n"
-                        f"Redeem this immediately on your PlayStation console or app."
+                        f"✨ <i>Auto-Sniper successfully bought your voucher!</i>\n"
+                        f"{redeem_tip}"
                     )
                     await bot.send_message(
                         chat_id=chat_id,
@@ -455,7 +481,19 @@ async def run_sniper_loop(
                         parse_mode=ParseMode.HTML,
                         reply_markup=get_main_menu_keyboard(),
                     )
-                    # Successful buy: finish sniper
+                    # Send proof photo if available
+                    shot_file = result.error_screenshot
+                    if shot_file and os.path.exists(shot_file):
+                        try:
+                            with open(shot_file, "rb") as photo:
+                                await bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=photo,
+                                    caption=f"📸 Order proof for {prod_name}",
+                                )
+                        except Exception:
+                            pass
+                    # Successful buy: finish sniper (single-time execution)
                     break
                 else:
                     logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {result.message}")
@@ -579,9 +617,10 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
     msg = (
-        "🎯 <b>Auto-Sniper / Restock Monitor (Rooter Shop 24/7)</b>\n\n"
-        f"Bot har {config.SNIPE_INTERVAL_SECONDS}s me PlayStation page check karega aur jaise hi stock aayega, wallet balance se turant instant-buy kar lega!\n\n"
-        f"<b>Select PlayStation Denomination:</b>{login_note}"
+        "🎯 <b>Auto-Sniper / Restock Monitor (Rooter Shop)</b>\n\n"
+        f"Bot har {config.SNIPE_INTERVAL_SECONDS}s me stock check karega aur jaise hi available hoga, wallet balance se turant instant-buy kar lega!\n\n"
+        f"<b>Select Voucher Denomination:</b>\n"
+        f"<i>(🧪 <b>₹10 Google Play Code</b> select karne par bot turant 1-time real test buy karke finish kar dega!)</i>{login_note}"
     )
     if query:
         await query.answer()
@@ -638,18 +677,23 @@ async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFA
     }
 
     mode_text = "🧪 Simulation (Dry Run)" if config.SIMULATION_MODE else "⚡ Live Purchasing (Real Checkout)"
+    prod_name = "Google Play Recharge Code (₹10 Real Test Snipe)" if denomination < 1000 else f"PlayStation ₹{denomination:,}"
+    note_text = (
+        "✅ <b>1-Time Test Snipe Running:</b> Bot Google Play ₹10 code ko Rooter Wallet balance se turant 1 baar buy karega aur complete ho jayega!"
+        if denomination < 1000
+        else "✅ <b>24/7 Restock Monitor Active:</b> Jaise hi PlayStation voucher stock me aayega, bot bina kisi delay ke turant buy kar lega aur voucher code aapko yahan message kar dega."
+    )
 
     await query.edit_message_text(
         text=(
-            f"🚀 <b>Auto-Sniper Activated! (24/7 Restock Loop)</b>\n"
+            f"🚀 <b>Auto-Sniper Activated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎮 <b>Platform:</b> {plat_name}\n"
-            f"💰 <b>Target Voucher:</b> PlayStation ₹{denomination:,}\n"
+            f"🎯 <b>Platform:</b> {plat_name}\n"
+            f"💰 <b>Target Voucher:</b> {prod_name}\n"
             f"⏱️ <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_SECONDS} seconds\n"
             f"⚡ <b>Mode:</b> <code>{mode_text}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ <b>Bot stock monitor kar raha hai!</b>\n"
-            f"Jaise hi PlayStation voucher stock me aayega, bot bina kisi delay ke turant buy kar lega aur voucher code aapko yahan message kar dega.\n\n"
+            f"{note_text}\n\n"
             f"<i>Aap Telegram band kar sakte hain ya doosra kaam kar sakte hain. Stop karne ke liye <code>/stop</code> dabayein.</i>"
         ),
         parse_mode=ParseMode.HTML,

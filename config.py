@@ -40,18 +40,23 @@ SCREENSHOT_DIR = BASE_DIR / "screenshots"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Rooter Product URLs
+ROOTER_PLAYSTATION_URL = "https://shop.rooter.gg/product/playstation-gift-cards"
+ROOTER_GOOGLE_PLAY_URL = "https://shop.rooter.gg/product/google-play-gift-card"
+
 # Supported Platforms
 PLATFORMS = {
     "rooter": {
         "name": "Rooter Shop",
-        "url": "https://shop.rooter.gg/product/playstation-gift-cards",
-        "search_query": "PlayStation",
-        "description": "Gaming and esports voucher marketplace",
-        "supported_denominations": [1000, 2000, 3000, 4000, 5000],
+        "url": ROOTER_PLAYSTATION_URL,
+        "google_play_url": ROOTER_GOOGLE_PLAY_URL,
+        "search_query": "PlayStation / Google Play",
+        "description": "Gaming, PlayStation, and Google Play voucher marketplace",
+        "supported_denominations": [10, 1000, 2000, 3000, 4000, 5000],
     },
 }
 
-DEFAULT_DENOMINATIONS = [1000, 2000, 3000, 4000, 5000]
+DEFAULT_DENOMINATIONS = [10, 1000, 2000, 3000, 4000, 5000]
 
 # Auto-Sniper Restock Refresh Interval in Seconds (Default: 30s)
 SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "30"))

@@ -8,20 +8,21 @@ An automated Python Telegram bot built using **`python-telegram-bot`** and **`Pl
 
 1. **Telegram Command Dashboard**:
    - `/start`: Welcome dashboard with live connection status and interactive menu.
-   - `/snipe`: 🎯 **24/7 Restock Auto-Sniper** (Directly monitors PlayStation product page every 30s and auto-buys instantly upon restock).
-   - `/stop`: 🛑 Stop active 24/7 restock monitoring.
-   - `/buy`: Trigger instant single purchase flow.
+   - `/snipe`: 🎯 **Auto-Sniper** (Select 🎮 PlayStation ₹1,000-₹5,000 for 24/7 restock monitoring, or 🧪 **Google Play ₹10** for an instant 1-time real test buy).
+   - `/stop`: 🛑 Stop active restock monitoring.
+   - `/buy`: Trigger instant single purchase flow (Supports Google Play ₹10 test code and PlayStation vouchers).
    - `/login`: Store account Bearer Token or log in via Phone + OTP.
    - `/status`: Check session token status, active sniper state, and execution mode.
    - `/toggle_sim`: Instantly switch between **🧪 Simulation Mode (Safe Dry Run)** and **⚡ Live Purchasing**.
    - `/cancel`: Cancel any ongoing conversational prompt.
 
 2. **Headless Browser Automation (Playwright)**:
-   - Direct navigation to Rooter PlayStation product page (`https://shop.rooter.gg/product/playstation-gift-cards`).
-   - Per-denomination stock check (₹1000, ₹2000, ₹3000, ₹4000, ₹5000).
+   - Direct navigation to Rooter PlayStation (`https://shop.rooter.gg/product/playstation-gift-cards`) and Google Play (`https://shop.rooter.gg/product/google-play-gift-card`).
+   - Supports 🧪 **₹10 Google Play Code** (₹8 from Rooter Wallet) for instant real-money testing.
+   - Per-denomination stock check (₹10, ₹1000, ₹2000, ₹3000, ₹4000, ₹5000).
    - Fast 1-click buy with Rooter Wallet balance.
    - Persistent session storage and cookie injection (`token`, `authToken`).
-   - Automated voucher code/PIN extraction from confirmation receipt.
+   - Automated voucher code/PIN extraction from confirmation receipt with order screenshot proof.
 
 ---
 

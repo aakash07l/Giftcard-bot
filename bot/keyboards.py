@@ -59,16 +59,22 @@ def get_login_methods_keyboard(platform: str = "rooter") -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(keyboard)
 
 def get_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
-    """Keyboard to pick PlayStation voucher denomination."""
+    """Keyboard to pick PlayStation or Google Play voucher denomination."""
     if not denominations:
         platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
-    # 2 buttons per row
     rows = []
+    # Test buy button for ₹10 Google Play Code
+    if 10 in denominations:
+        rows.append([
+            InlineKeyboardButton("🧪 ₹10 Google Play (1-Time Real Test Buy)", callback_data="denom_pick:rooter:10")
+        ])
+
+    ps_denoms = [d for d in denominations if d != 10]
     current_row = []
-    for denom in denominations:
-        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"denom_pick:rooter:{denom}")
+    for denom in ps_denoms:
+        btn = InlineKeyboardButton(f"🎮 ₹{denom:,} PSN", callback_data=f"denom_pick:rooter:{denom}")
         current_row.append(btn)
         if len(current_row) == 2:
             rows.append(current_row)
@@ -83,15 +89,22 @@ def get_denominations_keyboard(platform: str = "rooter", denominations: List[int
     return InlineKeyboardMarkup(rows)
 
 def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
-    """Keyboard to pick PlayStation voucher denomination for Auto-Sniper."""
+    """Keyboard to pick voucher denomination for Auto-Sniper."""
     if not denominations:
         platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
     rows = []
+    # Test buy button for ₹10 Google Play Code
+    if 10 in denominations:
+        rows.append([
+            InlineKeyboardButton("🧪 ₹10 Google Play (1-Time Real Test Snipe)", callback_data="snipe_denom:rooter:10")
+        ])
+
+    ps_denoms = [d for d in denominations if d != 10]
     current_row = []
-    for denom in denominations:
-        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"snipe_denom:rooter:{denom}")
+    for denom in ps_denoms:
+        btn = InlineKeyboardButton(f"🎮 ₹{denom:,} PSN", callback_data=f"snipe_denom:rooter:{denom}")
         current_row.append(btn)
         if len(current_row) == 2:
             rows.append(current_row)
@@ -108,9 +121,10 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
 
 def get_confirmation_keyboard(platform: str = "rooter", denomination: int = 1000) -> InlineKeyboardMarkup:
     """Keyboard to confirm purchase before triggering Playwright headless checkout."""
+    label = "🚀 Confirm & Buy Google Play ₹10" if denomination == 10 else f"🚀 Confirm & Buy PlayStation ₹{denomination:,}"
     keyboard = [
         [
-            InlineKeyboardButton("🚀 Confirm & Buy Now", callback_data=f"confirm_buy:rooter:{denomination}"),
+            InlineKeyboardButton(label, callback_data=f"confirm_buy:rooter:{denomination}"),
         ],
         [
             InlineKeyboardButton("🔙 Change Denomination", callback_data="buy_start"),
