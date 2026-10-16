@@ -159,6 +159,19 @@ class BrowserManager:
             window.chrome = {
                 runtime: {}
             };
+            // Auto-dismiss 'Different Location Detected' modal immediately whenever it appears
+            try {
+                setInterval(() => {
+                    const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+                    for (const b of btns) {
+                        const txt = (b.innerText || '').toLowerCase().trim();
+                        if (txt.includes('stay on this site') || txt.includes('no, stay')) {
+                            b.click();
+                            break;
+                        }
+                    }
+                }, 200);
+            } catch (e) {}
         """
         if active_token:
             uid = extract_user_id_from_jwt(active_token)

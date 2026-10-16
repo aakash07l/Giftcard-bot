@@ -197,6 +197,17 @@ class RooterService(BasePlatform):
 
         return cards
 
+    async def dismiss_location_popup(self, page: Page):
+        """Auto-dismisses 'Different Location Detected' modal by clicking 'No, stay on this site'."""
+        try:
+            stay_btn = page.locator("button:has-text('stay on this site'), button:has-text('No, stay on this site'), button:has-text('Stay on this site')").first
+            if await stay_btn.is_visible(timeout=800):
+                await stay_btn.click(force=True, timeout=1000)
+                logger.info("[Rooter] Clicked 'No, stay on this site' on Different Location modal.")
+                await page.wait_for_timeout(300)
+        except Exception:
+            pass
+
     async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
         """Accurate, denomination-specific check on Rooter product pages."""
         try:
@@ -209,6 +220,9 @@ class RooterService(BasePlatform):
             else:
                 await page.reload(wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
                 await page.wait_for_timeout(800)
+
+            # Auto-dismiss region popup if present
+            await self.dismiss_location_popup(page)
 
             # A. Google Play Recharge Code (₹10 Test Buy)
             if prod_info["type"] == "google_play":
@@ -232,9 +246,11 @@ class RooterService(BasePlatform):
             # B. PlayStation Gift Cards (₹1,000 to ₹5,000)
             else:
                 try:
-                    await page.wait_for_selector("div:has-text('Wallet Code')", timeout=12000)
+                    await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
                 except Exception:
                     pass
+
+                await self.dismiss_location_popup(page)
 
                 denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
                 if await denom_opt.count() == 0:
@@ -249,13 +265,19 @@ class RooterService(BasePlatform):
                         logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
                         return False
 
-                    # Click to select denomination
-                    await target_card.click()
-                    await page.wait_for_timeout(600)
+                    # Click to select denomination with force=True and short timeout
+                    try:
+                        await target_card.click(force=True, timeout=2000)
+                    except Exception:
+                        try:
+                            await target_card.dispatch_event("click")
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(300)
 
                     # Check bottom action button
                     try:
-                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=6000)
+                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=4000)
                         if bottom_btn:
                             btn_text = await bottom_btn.inner_text()
                             if "out of stock" not in btn_text.lower():
@@ -292,6 +314,9 @@ class RooterService(BasePlatform):
                 await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
                 await page.wait_for_timeout(1000)
 
+            # Auto-dismiss region popup if present
+            await self.dismiss_location_popup(page)
+
             # 1. Select the specific denomination
             if prod_info["type"] == "google_play":
                 # Default selection on Google Play product page is already ₹10
@@ -302,12 +327,28 @@ class RooterService(BasePlatform):
                     denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
 
                 if await denom_opt.count() > 0:
-                    await denom_opt.last.click()
-                    await page.wait_for_timeout(600)
+                    target_card = denom_opt.last
+                    card_text = await target_card.inner_text()
+                    if "out of stock" in card_text.lower():
+                        return PurchaseResult(
+                            success=False,
+                            platform="rooter",
+                            denomination=denomination,
+                            message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
+                        )
+                    try:
+                        await target_card.click(force=True, timeout=2500)
+                    except Exception:
+                        try:
+                            await target_card.dispatch_event("click")
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(300)
 
             # 2. Check if main action button is disabled / Out of Stock
+            await self.dismiss_location_popup(page)
             out_btn = page.locator("button:has-text('Out of Stock')").first
-            if await out_btn.is_visible(timeout=1500):
+            if await out_btn.is_visible(timeout=1000):
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
