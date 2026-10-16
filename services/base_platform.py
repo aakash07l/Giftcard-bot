@@ -32,7 +32,7 @@ class PurchaseResult(BaseModel):
 ProgressCallback = Callable[[str, str], Awaitable[None]]
 
 class BasePlatform(ABC):
-    """Abstract interface that each platform scraper (Blinkit, Rooter) implements."""
+    """Abstract interface that platform automation scrapers implement."""
 
     def __init__(self, platform_id: str, name: str, base_url: str):
         self.platform_id = platform_id

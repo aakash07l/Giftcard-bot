@@ -34,15 +34,6 @@ BROWSER_TIMEOUT_MS = int(os.getenv("BROWSER_TIMEOUT_MS", "45000"))
 ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "").strip()
 ROOTER_AUTH_TOKEN = os.getenv("ROOTER_AUTH_TOKEN", "").strip()
 
-# Blinkit Account Credentials / Auth Details
-BLINKIT_MOBILE = os.getenv("BLINKIT_MOBILE", "").strip()
-BLINKIT_AUTH_TOKEN = os.getenv("BLINKIT_AUTH_TOKEN", "").strip()
-
-# Default Location Settings (Blinkit dark-store localization)
-DEFAULT_PINCODE = os.getenv("DEFAULT_PINCODE", "110001")
-DEFAULT_LATITUDE = float(os.getenv("DEFAULT_LATITUDE", "28.6304"))
-DEFAULT_LONGITUDE = float(os.getenv("DEFAULT_LONGITUDE", "77.2177"))
-
 # Directories
 SESSION_DIR = BASE_DIR / "sessions"
 SCREENSHOT_DIR = BASE_DIR / "screenshots"
@@ -51,13 +42,6 @@ SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Supported Platforms
 PLATFORMS = {
-    "blinkit": {
-        "name": "Blinkit",
-        "url": "https://blinkit.com",
-        "search_query": "PlayStation Gift Card",
-        "description": "Quick commerce 10-minute delivery vouchers",
-        "supported_denominations": [500, 1000, 1500, 2500, 4000, 5000],
-    },
     "rooter": {
         "name": "Rooter Shop",
         "url": "https://shop.rooter.gg/product/playstation-gift-cards",
@@ -67,7 +51,7 @@ PLATFORMS = {
     },
 }
 
-DEFAULT_DENOMINATIONS = [500, 1000, 1500, 2500, 4000, 5000]
+DEFAULT_DENOMINATIONS = [1000, 2000, 3000, 4000, 5000]
 
 # Auto-Sniper Restock Refresh Interval in Seconds (Default: 30s)
 SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "30"))

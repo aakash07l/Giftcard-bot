@@ -57,9 +57,7 @@ class BrowserManager:
 
     def has_session(self, user_id: int, platform: str) -> bool:
         """Checks if a user session file exists or if static AUTH_TOKEN is set in config."""
-        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
-            return True
-        if platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+        if config.ROOTER_AUTH_TOKEN:
             return True
 
         session_file = self.get_session_file(user_id, platform)
@@ -75,22 +73,20 @@ class BrowserManager:
     async def create_context(
         self,
         user_id: Optional[int] = None,
-        platform: Optional[str] = None,
+        platform: Optional[str] = "rooter",
         apply_storage_state: bool = True,
     ) -> BrowserContext:
         """Creates an authenticated or fresh BrowserContext."""
         await self.initialize()
 
         storage_path = None
-        if apply_storage_state and user_id and platform:
-            s_file = self.get_session_file(user_id, platform)
+        if apply_storage_state and user_id:
+            s_file = self.get_session_file(user_id, "rooter")
             if s_file.exists():
                 storage_path = str(s_file)
 
         extra_http_headers = {}
-        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
-            extra_http_headers["authorization"] = f"Bearer {config.BLINKIT_AUTH_TOKEN}"
-        elif platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+        if config.ROOTER_AUTH_TOKEN:
             extra_http_headers["authorization"] = f"Bearer {config.ROOTER_AUTH_TOKEN}"
 
         context = await self._browser.new_context(
@@ -98,7 +94,7 @@ class BrowserManager:
             user_agent=DEFAULT_USER_AGENT,
             viewport={"width": 1366, "height": 768},
             permissions=["geolocation"],
-            geolocation={"latitude": config.DEFAULT_LATITUDE, "longitude": config.DEFAULT_LONGITUDE},
+            geolocation={"latitude": 28.6304, "longitude": 77.2177},
             locale="en-IN",
             timezone_id="Asia/Kolkata",
             extra_http_headers=extra_http_headers if extra_http_headers else None,
@@ -123,14 +119,7 @@ class BrowserManager:
                 runtime: {}
             };
         """
-        if platform == "blinkit" and config.BLINKIT_AUTH_TOKEN:
-            init_script += f"""
-                try {{
-                    localStorage.setItem('auth_token', '{config.BLINKIT_AUTH_TOKEN}');
-                    localStorage.setItem('token', '{config.BLINKIT_AUTH_TOKEN}');
-                }} catch (e) {{}}
-            """
-        elif platform == "rooter" and config.ROOTER_AUTH_TOKEN:
+        if config.ROOTER_AUTH_TOKEN:
             init_script += f"""
                 try {{
                     localStorage.setItem('rooter_token', '{config.ROOTER_AUTH_TOKEN}');
@@ -166,7 +155,7 @@ class BrowserManager:
         """Imports user cookies, storage state, or raw Bearer token."""
         raw_data = raw_data.strip()
         session_file = self.get_session_file(user_id, platform)
-        domain_origin = "https://rooter.gg" if platform == "rooter" else "https://blinkit.com"
+        domain_origin = "https://shop.rooter.gg"
 
         # Check if raw_data is a plain token string (e.g. Bearer eyJ... or eyJ...)
         clean_token = raw_data
@@ -176,40 +165,37 @@ class BrowserManager:
         # If it's a raw string (not JSON dict or list), treat directly as auth token
         if not (clean_token.startswith("{") or clean_token.startswith("[")):
             if len(clean_token) > 10:
-                if platform == "rooter":
-                    origins = [
-                        {
-                            "origin": "https://shop.rooter.gg",
-                            "localStorage": [
-                                {"name": "token", "value": clean_token},
-                                {"name": "auth_token", "value": clean_token},
-                                {"name": "rooter_token", "value": clean_token},
-                                {"name": "authToken", "value": clean_token},
-                            ]
-                        },
-                        {
-                            "origin": "https://rooter.gg",
-                            "localStorage": [
-                                {"name": "token", "value": clean_token},
-                                {"name": "auth_token", "value": clean_token},
-                                {"name": "rooter_token", "value": clean_token},
-                                {"name": "authToken", "value": clean_token},
-                            ]
-                        }
-                    ]
-                else:
-                    origins = [
-                        {
-                            "origin": "https://blinkit.com",
-                            "localStorage": [
-                                {"name": "token", "value": clean_token},
-                                {"name": "auth_token", "value": clean_token},
-                            ]
-                        }
-                    ]
+                origins = [
+                    {
+                        "origin": "https://shop.rooter.gg",
+                        "localStorage": [
+                            {"name": "token", "value": clean_token},
+                            {"name": "auth_token", "value": clean_token},
+                            {"name": "rooter_token", "value": clean_token},
+                            {"name": "authToken", "value": clean_token},
+                        ]
+                    },
+                    {
+                        "origin": "https://rooter.gg",
+                        "localStorage": [
+                            {"name": "token", "value": clean_token},
+                            {"name": "auth_token", "value": clean_token},
+                            {"name": "rooter_token", "value": clean_token},
+                            {"name": "authToken", "value": clean_token},
+                        ]
+                    }
+                ]
+
+                cookies = [
+                    {"name": "token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "rooter_token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "token", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
+                    {"name": "authToken", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
+                ]
 
                 payload = {
-                    "cookies": [],
+                    "cookies": cookies,
                     "origins": origins
                 }
                 with open(session_file, "w", encoding="utf-8") as f:

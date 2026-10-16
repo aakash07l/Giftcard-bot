@@ -1,7 +1,7 @@
 """
 Telegram Bot handlers for commands, conversations, and interactive callbacks.
 Uses HTML ParseMode for ultra-stable, error-free formatting.
-Supports environment credentials (ROOTER_AUTH_TOKEN, BLINKIT_AUTH_TOKEN) and interactive flows.
+Supports environment credentials (ROOTER_AUTH_TOKEN) and interactive flows.
 """
 
 import html
@@ -33,7 +33,6 @@ from bot.keyboards import (
     get_cancel_keyboard,
 )
 from services.browser_manager import browser_manager
-from services.blinkit_service import BlinkitService
 from services.rooter_service import RooterService
 from services.base_platform import BasePlatform
 
@@ -41,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 # Register platform services
 PLATFORM_SERVICES: Dict[str, BasePlatform] = {
-    "blinkit": BlinkitService(),
     "rooter": RooterService(),
 }
 
@@ -52,14 +50,7 @@ LOGIN_SESSIONS: Dict[int, Dict[str, Any]] = {}
 ACTIVE_SNIPERS: Dict[int, Dict[str, Any]] = {}
 
 def format_status_text(user_id: int) -> str:
-    """Formats current bot status including logged-in platforms, sniper status, and mode in HTML."""
-    if config.BLINKIT_AUTH_TOKEN:
-        blinkit_logged = "🟢 Configured (ENV Token)"
-    elif browser_manager.has_session(user_id, "blinkit"):
-        blinkit_logged = "🟢 Logged In (Session)"
-    else:
-        blinkit_logged = "🔴 Not Logged In"
-
+    """Formats current bot status for Rooter PlayStation sniper in HTML."""
     if config.ROOTER_AUTH_TOKEN:
         rooter_logged = "🟢 Configured (ENV Token)"
     elif browser_manager.has_session(user_id, "rooter"):
@@ -71,24 +62,22 @@ def format_status_text(user_id: int) -> str:
 
     sniper_info = ACTIVE_SNIPERS.get(user_id)
     if sniper_info:
-        plat_disp = sniper_info["platform"].title()
         denom_disp = sniper_info["denomination"]
         checks = sniper_info.get("attempts", 0)
-        sniper_text = f"🟢 Active ({plat_disp} ₹{denom_disp:,} - <code>{checks}</code> checks)"
+        sniper_text = f"🟢 Active (Rooter ₹{denom_disp:,} - <code>{checks}</code> checks)"
     else:
         sniper_text = "⚪ Inactive"
 
     return (
-        f"🎮 <b>PlayStation Gift Card Buyer Bot</b>\n"
+        f"🎮 <b>PlayStation Gift Card Buyer Bot (Rooter Shop)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Execution Mode:</b> <code>{mode_text}</code>\n"
         f"• <b>24/7 Restock Sniper:</b> {sniper_text}\n"
-        f"• <b>Blinkit Account:</b> {blinkit_logged}\n"
         f"• <b>Rooter Account:</b> {rooter_logged}\n"
-        f"• <b>Delivery Pincode:</b> <code>{config.DEFAULT_PINCODE}</code>\n"
+        f"• <b>Refresh Interval:</b> <code>{config.SNIPE_INTERVAL_SECONDS}s</code>\n"
         f"• <b>Environment:</b> <code>{config.ENV}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Use the buttons below to log into your account, trigger instant buy, or start 24/7 auto-sniper."
+        f"Use the buttons below to log in, trigger instant buy, or start 24/7 auto-sniper."
     )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,9 +119,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/toggle_sim</code> — Switch between Safe Simulation & Live Buy\n"
         "• <code>/cancel</code> — Reset active operations\n\n"
         "🎯 <b>Auto-Sniper Workflow:</b>\n"
-        "1. Send <code>/snipe</code> and choose Rooter or Blinkit + denomination.\n"
-        f"2. Bot runs continuously in the background, refreshing the catalog every {config.SNIPE_INTERVAL_SECONDS}s.\n"
-        "3. Jaise hi PlayStation code restock hoga, bot turant 1-click buy karke code yahan bhej dega!"
+        "1. Send <code>/snipe</code> and choose PlayStation denomination (₹1,000 to ₹5,000).\n"
+        f"2. Bot runs continuously in the background, checking Rooter Shop every {config.SNIPE_INTERVAL_SECONDS}s.\n"
+        "3. Jaise hi PlayStation code restock hoga, bot turant Rooter balance se 1-click buy karke code yahan bhej dega!"
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -186,44 +175,31 @@ async def toggle_sim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==================== BUY WORKFLOW ====================
 
 async def buy_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Initiates the buy flow by asking for platform selection."""
+    """Initiates instant purchase on Rooter Shop by asking for denomination."""
     query = update.callback_query
-    msg = "🛒 <b>Step 1/3: Choose Platform</b>\n\nSelect where you want to buy the PlayStation Gift Card from:"
+    context.user_data["buy_platform"] = "rooter"
+    msg = (
+        "🛒 <b>Instant Buy — Rooter Shop</b>\n\n"
+        "Select the PlayStation Gift Card denomination to buy using your Rooter wallet balance:"
+    )
     if query:
         await query.answer()
         await query.edit_message_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="buy_plat"),
+            reply_markup=get_denominations_keyboard("rooter"),
         )
     else:
         await update.message.reply_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="buy_plat"),
+            reply_markup=get_denominations_keyboard("rooter"),
         )
-    return BotState.SELECT_BUY_PLATFORM
+    return BotState.SELECT_BUY_DENOMINATION
 
 async def buy_platform_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Platform selected; now asks for denomination."""
-    query = update.callback_query
-    await query.answer()
-
-    _, platform = query.data.split(":", 1)
-    context.user_data["buy_platform"] = platform
-
-    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
-
-    await query.edit_message_text(
-        text=(
-            f"🎯 <b>Selected Platform:</b> {plat_name}\n\n"
-            f"🛒 <b>Step 2/3: Select Denomination</b>\n"
-            f"Choose the amount for your PlayStation Gift Card:"
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_denominations_keyboard(platform),
-    )
-    return BotState.SELECT_BUY_DENOMINATION
+    """Fallback handler redirecting to Rooter denomination selection."""
+    return await buy_start_handler(update, context)
 
 async def buy_denomination_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Denomination picked; show confirmation dialog."""
@@ -393,7 +369,7 @@ async def run_sniper_loop(
     stop_event: asyncio.Event,
 ):
     """
-    Background worker loop that refreshes Rooter / Blinkit every 30 seconds.
+    Background worker loop that refreshes Rooter Shop every 30 seconds.
     As soon as stock is detected, it immediately executes purchase and delivers
     the PlayStation voucher code and PIN to the user on Telegram.
     """
@@ -593,54 +569,38 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         return ConversationHandler.END
 
+    context.user_data["snipe_platform"] = "rooter"
+    has_session = browser_manager.has_session(user_id, "rooter")
+    login_note = ""
+    if not has_session:
+        login_note = (
+            "\n\n⚠️ <b>Warning:</b> Aap Rooter par logged in nahi hain! "
+            "Instant buy ke liye pehle <code>/login</code> se account token zaroor save kar lein."
+        )
+
     msg = (
-        "🎯 <b>Auto-Sniper / Restock Monitor (24/7)</b>\n\n"
-        "Bot lagatar page refresh karta rahega aur <b>jaise hi stock me PlayStation voucher aayega, turant instant-buy</b> kar lega!\n\n"
-        "<b>Step 1/2: Platform Choose Karein</b>"
+        "🎯 <b>Auto-Sniper / Restock Monitor (Rooter Shop 24/7)</b>\n\n"
+        f"Bot har {config.SNIPE_INTERVAL_SECONDS}s me PlayStation page check karega aur jaise hi stock aayega, wallet balance se turant instant-buy kar lega!\n\n"
+        f"<b>Select PlayStation Denomination:</b>{login_note}"
     )
     if query:
         await query.answer()
         await query.edit_message_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="snipe_plat"),
+            reply_markup=get_snipe_denominations_keyboard("rooter"),
         )
     else:
         await update.message.reply_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="snipe_plat"),
+            reply_markup=get_snipe_denominations_keyboard("rooter"),
         )
-    return BotState.SELECT_SNIPE_PLATFORM
+    return BotState.SELECT_SNIPE_DENOMINATION
 
 async def snipe_platform_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Platform chosen for Auto-Sniper; ask denomination."""
-    query = update.callback_query
-    await query.answer()
-
-    _, platform = query.data.split(":", 1)
-    context.user_data["snipe_platform"] = platform
-    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
-
-    user_id = update.effective_user.id
-    has_session = browser_manager.has_session(user_id, platform)
-    login_note = ""
-    if not has_session:
-        login_note = (
-            f"\n\n⚠️ <b>Warning:</b> Aap {plat_name} par logged in nahi hain! "
-            f"Bot stock monitor to karega, par instant 1-click buy ke liye pehle <code>/login</code> se account token zaroor save kar lein."
-        )
-
-    await query.edit_message_text(
-        text=(
-            f"🎯 <b>Selected Platform:</b> {plat_name}\n\n"
-            f"<b>Step 2/2: Select PlayStation Denomination</b>\n"
-            f"Kis amount ka PlayStation voucher snipe karna hai?{login_note}"
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_snipe_denominations_keyboard(platform),
-    )
-    return BotState.SELECT_SNIPE_DENOMINATION
+    """Fallback handler redirecting to Rooter denomination selection."""
+    return await snipe_start_handler(update, context)
 
 async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Denomination picked; launches background auto-sniper loop."""
@@ -739,42 +699,28 @@ async def stop_snipe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==================== LOGIN WORKFLOW ====================
 
 async def login_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Initiates login flow by prompting for platform selection."""
+    """Initiates login flow for Rooter Shop."""
     query = update.callback_query
-    msg = "🔑 <b>Step 1/2: Select Platform for Login</b>\n\nChoose the platform you wish to authenticate:"
+    context.user_data["login_platform"] = "rooter"
+    msg = "🔑 <b>Rooter Shop Authentication</b>\n\nChoose how you want to log into your Rooter account:"
     if query:
         await query.answer()
         await query.edit_message_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="login_plat"),
+            reply_markup=get_login_methods_keyboard("rooter"),
         )
     else:
         await update.message.reply_text(
             text=msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_platforms_keyboard(prefix="login_plat"),
+            reply_markup=get_login_methods_keyboard("rooter"),
         )
-    return BotState.SELECT_LOGIN_PLATFORM
+    return BotState.SELECT_LOGIN_METHOD
 
 async def login_platform_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Platform picked; ask for login method (OTP or Cookies)."""
-    query = update.callback_query
-    await query.answer()
-
-    _, platform = query.data.split(":", 1)
-    context.user_data["login_platform"] = platform
-    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
-
-    await query.edit_message_text(
-        text=(
-            f"🔑 <b>Platform:</b> {plat_name}\n\n"
-            f"Select your preferred authentication method:"
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_login_methods_keyboard(platform),
-    )
-    return BotState.SELECT_LOGIN_METHOD
+    """Fallback handler redirecting to Rooter login methods."""
+    return await login_start_handler(update, context)
 
 async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User selects Phone+OTP or Cookie import."""
@@ -782,24 +728,21 @@ async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     parts = query.data.split(":")
-    platform = parts[1]
-    method = parts[2]
+    method = parts[2] if len(parts) > 2 else "cookie"
+    platform = "rooter"
 
-    context.user_data["login_platform"] = platform
-    plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
+    context.user_data["login_platform"] = "rooter"
 
     # Pre-configured phone number check
     default_phone = ""
-    if platform == "blinkit" and config.BLINKIT_MOBILE:
-        default_phone = f"\n💡 <i>(Pre-configured in ENV: {config.BLINKIT_MOBILE})</i>"
-    elif platform == "rooter" and config.ROOTER_MOBILE:
+    if config.ROOTER_MOBILE:
         default_phone = f"\n💡 <i>(Pre-configured in ENV: {config.ROOTER_MOBILE})</i>"
 
     if method == "phone":
         await query.edit_message_text(
             text=(
-                f"📱 <b>Interactive Phone Login — {plat_name}</b>\n\n"
-                f"Please reply with your <b>10-digit mobile number</b> linked to {plat_name}:\n"
+                f"📱 <b>Interactive Phone Login — Rooter Shop</b>\n\n"
+                f"Please reply with your <b>10-digit mobile number</b> linked to Rooter:\n"
                 f"<i>(Example: 9876543210)</i>{default_phone}"
             ),
             parse_mode=ParseMode.HTML,
@@ -810,9 +753,9 @@ async def login_method_selected(update: Update, context: ContextTypes.DEFAULT_TY
     elif method == "cookie":
         await query.edit_message_text(
             text=(
-                f"🍪 <b>Paste Bearer Token or Cookies — {plat_name}</b>\n\n"
-                f"Aap apna <b>Bearer Token</b> (e.g. <code>eyJhbGci...</code>) ya cookies JSON yahan chat me paste karein:\n\n"
-                f"<i>Bot turant isse session me save kar lega!</i>"
+                "🍪 <b>Paste Bearer Token or Cookies — Rooter Shop</b>\n\n"
+                "Aap apna <b>Bearer Token</b> (e.g. <code>eyJhbGci...</code>) ya cookies JSON yahan chat me paste karein:\n\n"
+                "<i>Bot turant isse session me save kar lega aur wallet connect ho jayega!</i>"
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
@@ -823,8 +766,8 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
     """Receives phone number and triggers headless browser OTP request."""
     user_id = update.effective_user.id
     phone_text = update.message.text.strip()
-    platform = context.user_data.get("login_platform", "blinkit")
-    service = PLATFORM_SERVICES.get(platform)
+    platform = "rooter"
+    service = PLATFORM_SERVICES.get("rooter")
 
     # Store login context
     otp_event = asyncio.Event()
@@ -880,7 +823,7 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await update.message.reply_text(
                     f"❌ <b>Login failed or timed out on {platform.title()}.</b>\n\n"
-                    f"💡 <i>Tip:</i> Cloud servers par Rooter/Blinkit anti-bot security OTP block kar sakti hai.\n"
+                    f"💡 <i>Tip:</i> Cloud servers par Rooter anti-bot security OTP block kar sakti hai.\n"
                     f"Aap seedha <code>/login</code> me jakar <b>Paste Bearer Token</b> option se apna auth token paste kar sakte hain!",
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
@@ -916,7 +859,7 @@ async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_T
     """Receives raw Bearer token or JSON cookies and imports them."""
     user_id = update.effective_user.id
     cookie_text = update.message.text.strip()
-    platform = context.user_data.get("login_platform", "blinkit")
+    platform = "rooter"
 
     success = browser_manager.import_session_json(user_id, platform, cookie_text)
     if success:

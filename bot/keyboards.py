@@ -32,13 +32,10 @@ def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
     ])
 
 def get_platforms_keyboard(prefix: str = "plat_select") -> InlineKeyboardMarkup:
-    """Keyboard to select between supported voucher platforms (Blinkit, Rooter)."""
+    """Keyboard for platform selection (Rooter Shop)."""
     keyboard = [
         [
-            InlineKeyboardButton("⚡ Blinkit (10-Min Vouchers)", callback_data=f"{prefix}:blinkit"),
-        ],
-        [
-            InlineKeyboardButton("🎯 Rooter (Gaming Shop)", callback_data=f"{prefix}:rooter"),
+            InlineKeyboardButton("🎯 Rooter Shop (PlayStation Vouchers)", callback_data=f"{prefix}:rooter"),
         ],
         [
             InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu"),
@@ -46,33 +43,32 @@ def get_platforms_keyboard(prefix: str = "plat_select") -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_login_methods_keyboard(platform: str) -> InlineKeyboardMarkup:
+def get_login_methods_keyboard(platform: str = "rooter") -> InlineKeyboardMarkup:
     """Keyboard to pick login method: interactive Phone+OTP or Paste Session Cookies."""
-    platform_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
     keyboard = [
         [
-            InlineKeyboardButton("📱 Interactive Phone + OTP", callback_data=f"login_method:{platform}:phone"),
+            InlineKeyboardButton("📱 Interactive Phone + OTP", callback_data="login_method:rooter:phone"),
         ],
         [
-            InlineKeyboardButton("🍪 Paste Cookie / Session JSON", callback_data=f"login_method:{platform}:cookie"),
+            InlineKeyboardButton("🍪 Paste Cookie / Session JSON", callback_data="login_method:rooter:cookie"),
         ],
         [
-            InlineKeyboardButton("🔙 Back to Platforms", callback_data="login_start"),
+            InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_denominations_keyboard(platform: str, denominations: List[int] = None) -> InlineKeyboardMarkup:
+def get_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
     """Keyboard to pick PlayStation voucher denomination."""
     if not denominations:
-        platform_info = config.PLATFORMS.get(platform, {})
+        platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
     # 2 buttons per row
     rows = []
     current_row = []
     for denom in denominations:
-        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"denom_pick:{platform}:{denom}")
+        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"denom_pick:rooter:{denom}")
         current_row.append(btn)
         if len(current_row) == 2:
             rows.append(current_row)
@@ -81,21 +77,21 @@ def get_denominations_keyboard(platform: str, denominations: List[int] = None) -
         rows.append(current_row)
 
     rows.append([
-        InlineKeyboardButton("🔄 Change Platform", callback_data="buy_start"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
     return InlineKeyboardMarkup(rows)
 
-def get_snipe_denominations_keyboard(platform: str, denominations: List[int] = None) -> InlineKeyboardMarkup:
+def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
     """Keyboard to pick PlayStation voucher denomination for Auto-Sniper."""
     if not denominations:
-        platform_info = config.PLATFORMS.get(platform, {})
+        platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
     rows = []
     current_row = []
     for denom in denominations:
-        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"snipe_denom:{platform}:{denom}")
+        btn = InlineKeyboardButton(f"₹{denom:,}", callback_data=f"snipe_denom:rooter:{denom}")
         current_row.append(btn)
         if len(current_row) == 2:
             rows.append(current_row)
@@ -104,36 +100,30 @@ def get_snipe_denominations_keyboard(platform: str, denominations: List[int] = N
         rows.append(current_row)
 
     rows.append([
-        InlineKeyboardButton("🔄 Change Platform", callback_data="snipe_start"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
     return InlineKeyboardMarkup(rows)
 
 
-def get_confirmation_keyboard(platform: str, denomination: int) -> InlineKeyboardMarkup:
+def get_confirmation_keyboard(platform: str = "rooter", denomination: int = 1000) -> InlineKeyboardMarkup:
     """Keyboard to confirm purchase before triggering Playwright headless checkout."""
     keyboard = [
         [
-            InlineKeyboardButton("🚀 Confirm & Buy Now", callback_data=f"confirm_buy:{platform}:{denomination}"),
+            InlineKeyboardButton("🚀 Confirm & Buy Now", callback_data=f"confirm_buy:rooter:{denomination}"),
         ],
         [
-            InlineKeyboardButton("🔙 Change Denomination", callback_data=f"buy_plat:{platform}"),
+            InlineKeyboardButton("🔙 Change Denomination", callback_data="buy_start"),
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_alternate_platform_keyboard(current_platform: str, denomination: int) -> InlineKeyboardMarkup:
-    """Offers quick fallback when item is Out-of-Stock on one platform."""
-    alt_platform = "rooter" if current_platform == "blinkit" else "blinkit"
-    alt_name = config.PLATFORMS.get(alt_platform, {}).get("name", alt_platform.title())
-    
+def get_alternate_platform_keyboard(current_platform: str = "rooter", denomination: int = 1000) -> InlineKeyboardMarkup:
+    """Menu navigation fallback."""
     keyboard = [
         [
-            InlineKeyboardButton(f"🔁 Search on {alt_name} Instead (₹{denomination:,})", callback_data=f"confirm_buy:{alt_platform}:{denomination}"),
-        ],
-        [
-            InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
+            InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
