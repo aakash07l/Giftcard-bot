@@ -208,8 +208,9 @@ class RooterService(BasePlatform):
         except Exception:
             pass
 
-    async def find_available_playstation_denomination(self, page: Page) -> Optional[int]:
-        """Finds the first PlayStation denomination currently in stock on Rooter (checks ₹1,000 to ₹5,000)."""
+    async def get_in_stock_playstation_denominations(self, page: Page) -> List[int]:
+        """Returns all PlayStation denominations currently in stock, sorted from highest to lowest (₹5k -> ₹1k)."""
+        in_stock_list = []
         try:
             target_url = self.playstation_url
             if target_url not in page.url:
@@ -229,7 +230,8 @@ class RooterService(BasePlatform):
 
             await self.dismiss_location_popup(page)
 
-            supported = [1000, 2000, 3000, 4000, 5000]
+            # Highest to lowest priority: ₹5,000 down to ₹1,000
+            supported = [5000, 4000, 3000, 2000, 1000]
             for d in supported:
                 denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
                 if await denom_opt.count() == 0:
@@ -238,37 +240,18 @@ class RooterService(BasePlatform):
                 if await denom_opt.count() > 0:
                     target_card = denom_opt.last
                     card_text = await target_card.inner_text()
-
-                    # Check for out of stock indicator
                     if "out of stock" not in card_text.lower():
                         logger.info(f"🚨 [Rooter] In-stock candidate card found: ₹{d}!")
-                        # Click to select denomination with force=True and short timeout
-                        try:
-                            await target_card.click(force=True, timeout=2000)
-                        except Exception:
-                            try:
-                                await target_card.dispatch_event("click")
-                            except Exception:
-                                pass
-                        await page.wait_for_timeout(300)
-
-                        # Check bottom action button
-                        try:
-                            bottom_btn = await page.wait_for_selector(
-                                "button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')",
-                                timeout=4000
-                            )
-                            if bottom_btn:
-                                btn_text = await bottom_btn.inner_text()
-                                if "out of stock" not in btn_text.lower():
-                                    logger.info(f"🚨 [Rooter] CONFIRMED IN STOCK: PlayStation ₹{d} button is active ({btn_text})!")
-                                    return d
-                        except Exception:
-                            pass
+                        in_stock_list.append(d)
         except Exception as e:
-            logger.warning(f"Error checking any PlayStation stock: {e}")
+            logger.warning(f"Error checking in-stock denominations: {e}")
 
-        return None
+        return in_stock_list
+
+    async def find_available_playstation_denomination(self, page: Page) -> Optional[int]:
+        """Finds the highest PlayStation denomination currently in stock on Rooter (₹5k -> ₹1k)."""
+        denoms = await self.get_in_stock_playstation_denominations(page)
+        return denoms[0] if denoms else None
 
     async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
         """Accurate, denomination-specific check on Rooter product pages."""
@@ -361,6 +344,8 @@ class RooterService(BasePlatform):
         self,
         page: Page,
         denomination: int,
+        quantity: int = 1,
+        account_label: Optional[str] = None,
         progress_callback: Optional[ProgressCallback] = None,
         simulation: bool = False,
     ) -> PurchaseResult:
@@ -396,6 +381,8 @@ class RooterService(BasePlatform):
                             success=False,
                             platform="rooter",
                             denomination=denomination,
+                            quantity=quantity,
+                            account_label=account_label,
                             message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
                         )
                     try:
@@ -407,6 +394,17 @@ class RooterService(BasePlatform):
                             pass
                     await page.wait_for_timeout(300)
 
+                    # Increment quantity if quantity > 1 (e.g. 2 per order)
+                    if quantity > 1:
+                        try:
+                            for _ in range(quantity - 1):
+                                plus_btn = page.locator("button:has-text('+'), div[class*='qty'] button:has-text('+'), div[class*='quantity'] button:has-text('+'), [aria-label*='increase']").first
+                                if await plus_btn.is_visible(timeout=1000):
+                                    await plus_btn.click(force=True, timeout=1000)
+                                    await page.wait_for_timeout(200)
+                        except Exception as qe:
+                            logger.debug(f"Could not increment quantity: {qe}")
+
             # 2. Check if main action button is disabled / Out of Stock
             await self.dismiss_location_popup(page)
             out_btn = page.locator("button:has-text('Out of Stock')").first
@@ -415,6 +413,8 @@ class RooterService(BasePlatform):
                     success=False,
                     platform="rooter",
                     denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
                     message=f"{prod_name} ₹{denomination:,} went out of stock right before checkout!",
                 )
 
@@ -433,10 +433,13 @@ class RooterService(BasePlatform):
                     success=True,
                     platform="rooter",
                     denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
                     voucher_code=mock_code,
                     voucher_pin=mock_pin,
+                    codes=[mock_code] if quantity == 1 else [mock_code, f"{mock_code}-2"],
                     order_id=mock_order,
-                    receipt_summary=f"Rooter {prod_name} ₹{denomination:,} [SIMULATION]",
+                    receipt_summary=f"Rooter {prod_name} ₹{denomination:,} x{quantity} [SIMULATION]",
                     message="Purchase flow simulated successfully in dry-run mode. Turn off SIMULATION_MODE to purchase with real balance.",
                     simulation=True,
                 )
@@ -601,6 +604,8 @@ class RooterService(BasePlatform):
                     success=False,
                     platform="rooter",
                     denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
                     message="Order submitted, but order confirmation was not detected on page. Please verify your Rooter profile / Orders tab.",
                     error_screenshot=shot_path,
                 )
@@ -609,15 +614,23 @@ class RooterService(BasePlatform):
             pin = pin_match.group(1) if pin_match else "N/A"
             order_id = order_match.group(1) if order_match else f"RTR-{int(asyncio.get_event_loop().time())}"
 
+            # Extract all voucher codes found if quantity > 1
+            active_body = orders_body if 'orders_body' in locals() else body_content
+            all_found_codes = re.findall(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", active_body, re.IGNORECASE)
+            codes_list = list(dict.fromkeys(all_found_codes)) if all_found_codes else ([code] if code else [])
+
             return PurchaseResult(
                 success=True,
                 platform="rooter",
                 denomination=denomination,
+                quantity=quantity,
+                account_label=account_label,
                 voucher_code=code,
                 voucher_pin=pin,
+                codes=codes_list,
                 order_id=order_id,
-                receipt_summary=f"Rooter {prod_name} ₹{denomination:,}",
-                message=f"{prod_name} successfully purchased on Rooter with wallet balance!",
+                receipt_summary=f"Rooter {prod_name} ₹{denomination:,} x{quantity}",
+                message=f"{prod_name} (x{quantity}) successfully purchased on Rooter with wallet balance!",
                 error_screenshot=shot_path,
                 simulation=False,
             )

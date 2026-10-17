@@ -19,8 +19,11 @@ class PurchaseResult(BaseModel):
     success: bool
     platform: str
     denomination: int
+    quantity: int = 1
     voucher_code: Optional[str] = None
     voucher_pin: Optional[str] = None
+    codes: List[str] = []
+    account_label: Optional[str] = None
     order_id: Optional[str] = None
     receipt_summary: Optional[str] = None
     message: str = ""

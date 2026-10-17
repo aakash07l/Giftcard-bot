@@ -119,11 +119,12 @@ class BrowserManager:
         user_id: Optional[int] = None,
         platform: Optional[str] = "rooter",
         apply_storage_state: bool = True,
+        custom_token: Optional[str] = None,
     ) -> BrowserContext:
         """Creates an authenticated or fresh BrowserContext."""
         await self.initialize()
 
-        active_token = self.get_active_token(user_id)
+        active_token = custom_token or self.get_active_token(user_id)
 
         storage_path = None
         if apply_storage_state and user_id:

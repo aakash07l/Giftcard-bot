@@ -23,3 +23,6 @@ class BotState(IntEnum):
     # Snipe / Restock monitor flow
     SELECT_SNIPE_PLATFORM = auto()
     SELECT_SNIPE_DENOMINATION = auto()
+
+    # Multi-account flow
+    AWAITING_ADD_ACCOUNT_DATA = auto()

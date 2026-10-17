@@ -23,6 +23,7 @@ import config
 from bot.states import BotState
 from bot.keyboards import (
     get_main_menu_keyboard,
+    get_accounts_keyboard,
     get_platforms_keyboard,
     get_login_methods_keyboard,
     get_denominations_keyboard,
@@ -35,6 +36,7 @@ from bot.keyboards import (
 from services.browser_manager import browser_manager
 from services.rooter_service import RooterService
 from services.base_platform import BasePlatform
+from services.account_manager import account_manager
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,13 @@ ACTIVE_SNIPERS: Dict[int, Dict[str, Any]] = {}
 
 def format_status_text(user_id: int) -> str:
     """Formats current bot status for Rooter PlayStation sniper in HTML."""
-    if config.ROOTER_AUTH_TOKEN:
+    all_accs = account_manager.get_all()
+    active_accs = account_manager.get_active()
+    total_bal = account_manager.get_total_balance()
+
+    if active_accs:
+        rooter_logged = f"🟢 {len(active_accs)} Active Account{'s' if len(active_accs) > 1 else ''} (Total: ₹{total_bal:,.0f})"
+    elif config.ROOTER_AUTH_TOKEN:
         rooter_logged = "🟢 Configured (ENV Token)"
     elif browser_manager.has_session(user_id, "rooter"):
         rooter_logged = "🟢 Logged In (Session)"
@@ -64,7 +72,7 @@ def format_status_text(user_id: int) -> str:
     if sniper_info:
         denom_disp = sniper_info["denomination"]
         checks = sniper_info.get("attempts", 0)
-        p_label = "Google Play ₹10" if denom_disp == 10 else f"PSN ₹{denom_disp:,}"
+        p_label = "Google Play ₹10" if denom_disp == 10 else ("Any PSN (₹1k-₹5k)" if denom_disp == 0 else f"PSN ₹{denom_disp:,}")
         sniper_text = f"🟢 Active ({p_label} - <code>{checks}</code> checks)"
     else:
         sniper_text = "⚪ Inactive"
@@ -74,11 +82,12 @@ def format_status_text(user_id: int) -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Execution Mode:</b> <code>{mode_text}</code>\n"
         f"• <b>24/7 Restock Sniper:</b> {sniper_text}\n"
-        f"• <b>Rooter Account:</b> {rooter_logged}\n"
+        f"• <b>Active Accounts:</b> {rooter_logged}\n"
+        f"• <b>Total Balance:</b> <b>₹{total_bal:,.0f}</b>\n"
         f"• <b>Refresh Interval:</b> <code>{config.SNIPE_INTERVAL_SECONDS}s</code>\n"
         f"• <b>Environment:</b> <code>{config.ENV}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Use the buttons below to log in, trigger instant buy, or start 24/7 auto-sniper."
+        f"Use the buttons below to manage accounts, instant buy, or start 24/7 auto-sniper."
     )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,17 +121,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 <b>PlayStation Buyer Bot — User Guide</b>\n\n"
         "⚡ <b>Commands:</b>\n"
         "• <code>/start</code> — Main dashboard & menu\n"
-        "• <code>/snipe</code> — 🎯 24/7 Restock Auto-Sniper (Auto-buys the second stock arrives!)\n"
+        "• <code>/accounts</code> — 👥 Manage 5-10 Rooter Accounts (View, Toggle, Balance)\n"
+        "• <code>/addaccount &lt;token&gt; [label] [balance]</code> — Add a Rooter account\n"
+        "• <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code> — Set account wallet balance\n"
+        "• <code>/snipe</code> — 🎯 24/7 Restock Auto-Sniper (Parallel buy across all active accounts!)\n"
         "• <code>/stop</code> — 🛑 Stop active 24/7 restock monitoring\n"
         "• <code>/buy</code> — Instant single purchase flow\n"
         "• <code>/login</code> — Store platform session / Bearer Token\n"
         "• <code>/status</code> — View current sessions, sniper status & mode\n"
         "• <code>/toggle_sim</code> — Switch between Safe Simulation & Live Buy\n"
         "• <code>/cancel</code> — Reset active operations\n\n"
-        "🎯 <b>Auto-Sniper Workflow:</b>\n"
-        "1. Send <code>/snipe</code> and choose PlayStation denomination (₹1,000 to ₹5,000).\n"
-        f"2. Bot runs continuously in the background, checking Rooter Shop every {config.SNIPE_INTERVAL_SECONDS}s.\n"
-        "3. Jaise hi PlayStation code restock hoga, bot turant Rooter balance se 1-click buy karke code yahan bhej dega!"
+        "🎯 <b>Multi-Account Restock Sniper:</b>\n"
+        "1. Add your 5 to 10 Rooter accounts with <code>/addaccount</code> or the 👥 button.\n"
+        "2. Set each account's wallet balance with <code>/setbalance &lt;id&gt; &lt;amount&gt;</code>.\n"
+        "3. Send <code>/snipe</code> -> select <b>Any PlayStation Card</b>.\n"
+        f"4. Bot checks stock every {config.SNIPE_INTERVAL_SECONDS}s. When stock lands, bot automatically picks the largest affordable denomination for each account and buys in parallel simultaneously!"
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -465,16 +478,19 @@ async def run_sniper_loop(
                 page = await browser_context.new_page()
 
             is_in_stock = False
-            detected_denom = None
+            available_denominations = []
             try:
-                if is_any_mode:
-                    detected_denom = await service.find_available_playstation_denomination(page)
-                    if detected_denom:
-                        is_in_stock = True
-                        target_denomination = detected_denom
+                if denomination < 1000:
+                    is_in_stock = await service.check_is_in_stock(page, 10)
+                    if is_in_stock:
+                        available_denominations = [10]
+                elif is_any_mode:
+                    available_denominations = await service.get_in_stock_playstation_denominations(page)
+                    is_in_stock = len(available_denominations) > 0
                 else:
-                    target_denomination = denomination
                     is_in_stock = await service.check_is_in_stock(page, denomination)
+                    if is_in_stock:
+                        available_denominations = [denomination]
             except Exception as e:
                 logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
                 if attempts == 1:
@@ -502,70 +518,176 @@ async def run_sniper_loop(
                     pass
 
             if is_in_stock:
-                active_prod = f"PlayStation Gift Card ₹{target_denomination:,}" if is_any_mode else prod_name
-                logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED for {active_prod} on {platform}!")
+                logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED on {platform}: {available_denominations}!")
 
-                # Notify Telegram user immediately
+                # Retrieve all active accounts for multi-account buying
+                active_accounts = account_manager.get_active()
+                if not active_accounts:
+                    active_accounts = [{
+                        "id": "acc_1",
+                        "label": "Account 1 (Primary)",
+                        "token": config.ROOTER_AUTH_TOKEN,
+                        "wallet_balance": 1084.0,
+                    }]
+
+                order_tasks = []
+                for acc in active_accounts:
+                    bal = float(acc.get("wallet_balance", 0.0))
+                    acc_label = acc.get("label", acc.get("id"))
+                    target_d = None
+                    target_q = 1
+
+                    if denomination < 1000:
+                        target_d = 10
+                        target_q = 1
+                    elif bal > 0:
+                        # High-to-low priority: 5000 -> 4000 -> 3000 -> 2000 -> 1000
+                        for cand_d in available_denominations:
+                            if cand_d <= bal:
+                                target_d = cand_d
+                                affordable_q = int(bal // cand_d)
+                                target_q = min(affordable_q, 2)  # Max 2 per order
+                                break
+                    else:
+                        # Balance untracked: pick highest available denomination, quantity 1
+                        target_d = available_denominations[0] if available_denominations else 1000
+                        target_q = 1
+
+                    if target_d is not None:
+                        order_tasks.append((acc, target_d, target_q))
+                    else:
+                        min_avail = min(available_denominations) if available_denominations else 1000
+                        logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < lowest in-stock card ₹{min_avail:,}")
+                        try:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{min_avail:,}.",
+                                parse_mode=ParseMode.HTML,
+                            )
+                        except Exception:
+                            pass
+
+                if not order_tasks:
+                    logger.warning("[Sniper] Stock detected but no active accounts have sufficient balance.")
+                    continue
+
+                # Notify Telegram user immediately of multi-account execution
+                acc_summary = ", ".join([f"{a.get('label', a['id'])} (₹{d:,} x{q})" for a, d, q in order_tasks])
                 try:
                     await bot.send_message(
                         chat_id=chat_id,
                         text=(
                             f"🚨 <b>STOCK DETECTED!</b>\n\n"
                             f"🎯 <b>Platform:</b> {plat_name}\n"
-                            f"📦 <b>Item:</b> PlayStation Gift Card\n"
-                            f"💰 <b>Denomination:</b> ₹{target_denomination:,}\n\n"
-                            f"⚡ <b>Executing instant 1-click buy with wallet balance...</b>"
+                            f"📦 <b>In-Stock Denominations:</b> {', '.join([f'₹{d:,}' for d in available_denominations])}\n"
+                            f"👥 <b>Executing Parallel 1-Click Buy for {len(order_tasks)} Account(s):</b>\n"
+                            f"<i>{html.escape(acc_summary)}</i>\n\n"
+                            f"⚡ <b>All accounts firing simultaneously with Rooter Wallet...</b>"
                         ),
                         parse_mode=ParseMode.HTML,
                     )
                 except Exception:
                     pass
 
-                # Execute purchase immediately
-                result = await service.execute_buy_flow(
-                    page=page,
-                    denomination=target_denomination,
-                    simulation=config.SIMULATION_MODE,
-                )
-
-                if result.success:
-                    sim_badge = " [SIMULATED TEST]" if result.simulation else ""
-                    v_code = html.escape(result.voucher_code or "")
-                    v_pin = html.escape(result.voucher_pin or "")
-                    o_id = html.escape(result.order_id or "")
-
-                    success_text = (
-                        f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎯 <b>Platform:</b> {plat_name}\n"
-                        f"📦 <b>Item:</b> {prod_name}\n"
-                        f"💰 <b>Denomination:</b> ₹{result.denomination:,}\n"
-                        f"🔑 <b>Voucher / Redeem Code:</b>\n<code>{v_code}</code>\n"
-                        f"🔒 <b>PIN / Key:</b>\n<code>{v_pin}</code>\n"
-                        f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"✨ <i>Auto-Sniper successfully bought your voucher!</i>\n"
-                        f"{redeem_tip}"
-                    )
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=success_text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=get_main_menu_keyboard(),
-                    )
-                    # Send proof photo if available
-                    shot_file = result.error_screenshot
-                    if shot_file and os.path.exists(shot_file):
+                # Execute parallel buy across all accounts simultaneously using asyncio.gather
+                async def execute_account_order(acc_data, d_val, q_val):
+                    acc_tok = acc_data.get("token") or config.ROOTER_AUTH_TOKEN
+                    acc_lbl = acc_data.get("label", acc_data.get("id"))
+                    acc_ctx = await browser_manager.create_context(custom_token=acc_tok)
+                    acc_page = await acc_ctx.new_page()
+                    try:
+                        res = await service.execute_buy_flow(
+                            page=acc_page,
+                            denomination=d_val,
+                            quantity=q_val,
+                            account_label=acc_lbl,
+                            simulation=config.SIMULATION_MODE,
+                        )
+                        return (acc_data, d_val, q_val, res)
+                    finally:
                         try:
-                            with open(shot_file, "rb") as photo:
-                                await bot.send_photo(
-                                    chat_id=chat_id,
-                                    photo=photo,
-                                    caption=f"📸 Order proof for {prod_name}",
-                                )
+                            await acc_page.close()
+                            await acc_ctx.close()
                         except Exception:
                             pass
-                    # Successful buy: finish sniper (single-time execution)
+
+                results = await asyncio.gather(
+                    *[execute_account_order(a, d, q) for a, d, q in order_tasks],
+                    return_exceptions=True
+                )
+
+                any_success = False
+                for item in results:
+                    if isinstance(item, Exception):
+                        logger.error(f"[Sniper] Account order exception: {item}")
+                        continue
+
+                    acc_data, d_val, q_val, result = item
+                    acc_lbl = html.escape(acc_data.get("label", acc_data.get("id")))
+
+                    if result.success:
+                        any_success = True
+                        sim_badge = " [SIMULATED TEST]" if result.simulation else ""
+                        total_paid = d_val * q_val
+                        account_manager.deduct_balance(acc_data.get("id"), total_paid)
+                        rem_bal = acc_data.get("wallet_balance", 0.0)
+
+                        codes_display = ""
+                        if result.codes and len(result.codes) > 1:
+                            codes_display = "\n".join([f"   {i+1}. <code>{html.escape(c)}</code>" for i, c in enumerate(result.codes)])
+                        else:
+                            codes_display = f"<code>{html.escape(result.voucher_code or 'N/A')}</code>"
+
+                        v_pin = html.escape(result.voucher_pin or "N/A")
+                        o_id = html.escape(result.order_id or "N/A")
+
+                        success_text = (
+                            f"🎉 <b>PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"👤 <b>Account:</b> {acc_lbl}\n"
+                            f"🎯 <b>Platform:</b> {plat_name}\n"
+                            f"📦 <b>Item:</b> PlayStation Gift Card (Qty: {result.quantity})\n"
+                            f"💰 <b>Denomination:</b> ₹{result.denomination:,} each (Total Paid: ₹{total_paid:,})\n"
+                            f"🔑 <b>Voucher Code(s):</b>\n{codes_display}\n"
+                            f"🔒 <b>PIN / Key:</b> <code>{v_pin}</code>\n"
+                            f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
+                            f"💳 <b>Remaining Balance:</b> ₹{rem_bal:,.0f}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"✨ <i>Auto-Sniper successfully claimed your vouchers!</i>\n"
+                            f"{redeem_tip}"
+                        )
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=success_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_main_menu_keyboard(),
+                        )
+
+                        shot_file = result.error_screenshot
+                        if shot_file and os.path.exists(shot_file):
+                            try:
+                                with open(shot_file, "rb") as photo:
+                                    await bot.send_photo(
+                                        chat_id=chat_id,
+                                        photo=photo,
+                                        caption=f"📸 Order proof for {acc_lbl}",
+                                    )
+                            except Exception:
+                                pass
+                    else:
+                        logger.warning(f"[Sniper] Purchase failed for {acc_lbl}: {result.message}")
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"⚠️ <b>Sniper Alert ({acc_lbl}):</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
+                                f"<code>{html.escape(result.message)}</code>"
+                            ),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_stop_snipe_keyboard(),
+                        )
+
+                if any_success:
+                    logger.info("[Sniper] Purchase completed successfully for account(s). Finishing sniper run.")
                     break
                 else:
                     logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {result.message}")
@@ -1035,3 +1157,221 @@ async def cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu_keyboard(),
         )
     return ConversationHandler.END
+
+
+# ==================== MULTI-ACCOUNT MANAGEMENT ====================
+
+def format_accounts_text() -> str:
+    """Builds an informative message listing all accounts, balances, and active states."""
+    accounts = account_manager.get_all()
+    if not accounts:
+        return (
+            "👥 <b>Rooter Accounts (0 Configured)</b>\n\n"
+            "Abhi koi account configured nahi hai.\n"
+            "Naya account add karne ke liye neeche diye button par click karein ya command use karein:\n"
+            "<code>/addaccount &lt;bearer_token&gt; [label] [balance]</code>"
+        )
+
+    active_accs = account_manager.get_active()
+    total_bal = account_manager.get_total_balance()
+
+    lines = [
+        "👥 <b>Rooter Accounts Manager (Multi-Account)</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"• <b>Total Accounts:</b> {len(accounts)}",
+        f"• <b>Active for Sniping:</b> 🟢 {len(active_accs)} / {len(accounts)}",
+        f"• <b>Combined Active Balance:</b> ₹{total_bal:,.0f}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "<b>Registered Accounts:</b>",
+    ]
+
+    for idx, acc in enumerate(accounts, 1):
+        status_icon = "🟢 Active" if acc.get("is_active", True) else "⏸️ Paused"
+        lbl = html.escape(acc.get("label", acc.get("id")))
+        bal = float(acc.get("wallet_balance", 0.0))
+        uid = acc.get("user_id") or "N/A"
+        tok_preview = acc.get("token", "")[:12] + "..." if acc.get("token") else "None"
+        lines.append(
+            f"{idx}. <b>{lbl}</b> [{status_icon}]\n"
+            f"   • ID: <code>{acc.get('id')}</code> | UID: <code>{uid}</code>\n"
+            f"   • Wallet Balance: <b>₹{bal:,.0f}</b>\n"
+            f"   • Token: <code>{tok_preview}</code>"
+        )
+
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "💡 <i>Tap an account button below to pause/resume it.</i>",
+        "💡 <i>Use <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code> to update wallet balance.</i>",
+        "💡 <i>Example: <code>/setbalance acc_1 1084</code></i>",
+    ])
+    return "\n".join(lines)
+
+
+async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the multi-account dashboard and interactive buttons."""
+    text = format_accounts_text()
+    accounts = account_manager.get_all()
+    markup = get_accounts_keyboard(accounts)
+
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    else:
+        await update.message.reply_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def acc_add_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompts the user to paste Bearer token for adding a new Rooter account."""
+    query = update.callback_query
+    prompt_text = (
+        "➕ <b>Add New Rooter Account (5-10 Multi-Account)</b>\n\n"
+        "Apne naye Rooter account ka <b>Bearer Token</b> yahan chat me paste karein:\n\n"
+        "💡 <b>Optional format:</b>\n"
+        "<code>&lt;bearer_token&gt; [label] [balance]</code>\n\n"
+        "<b>Example:</b>\n"
+        "<code>eyJhbGciOi... Account-2 5000</code>\n\n"
+        "<i>(Ya sirf token paste karein, label aur balance baad me bhi /setbalance se set ho sakta hai)</i>"
+    )
+    if query:
+        await query.answer()
+        await query.edit_message_text(text=prompt_text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+    else:
+        await update.message.reply_text(text=prompt_text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+    return BotState.AWAITING_ADD_ACCOUNT_DATA
+
+
+async def handle_add_account_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles user input containing new account token, label, and balance."""
+    raw_text = update.message.text.strip()
+    parts = raw_text.split()
+    if not parts:
+        await update.message.reply_text("❌ Input empty. Please provide a valid Bearer token.", reply_markup=get_main_menu_keyboard())
+        return ConversationHandler.END
+
+    token = parts[0]
+    label = None
+    balance = 0.0
+
+    if len(parts) >= 2:
+        if parts[1].replace(".", "", 1).isdigit():
+            balance = float(parts[1])
+        else:
+            label = parts[1]
+
+    if len(parts) >= 3:
+        if parts[2].replace(".", "", 1).isdigit():
+            balance = float(parts[2])
+        elif not label:
+            label = parts[2]
+
+    try:
+        acc = account_manager.add_account(token=token, label=label, wallet_balance=balance)
+        success_text = (
+            f"✅ <b>Account Added Successfully!</b>\n\n"
+            f"• <b>Label:</b> {html.escape(acc.get('label'))}\n"
+            f"• <b>ID:</b> <code>{acc.get('id')}</code>\n"
+            f"• <b>User ID:</b> <code>{acc.get('user_id')}</code>\n"
+            f"• <b>Tracked Balance:</b> ₹{acc.get('wallet_balance'):,.0f}\n"
+            f"• <b>Status:</b> 🟢 Active for Auto-Snipe\n\n"
+            f"Restock aane par ye account baaki sabhi accounts ke sath parallel me buy karega!"
+        )
+        accounts = account_manager.get_all()
+        await update.message.reply_text(
+            text=success_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_accounts_keyboard(accounts),
+        )
+    except Exception as e:
+        logger.error(f"Failed to add account: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Failed to add account: {e}", reply_markup=get_main_menu_keyboard())
+
+    return ConversationHandler.END
+
+
+async def acc_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggles active status of an account via inline button."""
+    query = update.callback_query
+    await query.answer()
+
+    acc_id = query.data.split(":")[1]
+    new_state = account_manager.toggle_active(acc_id)
+    if new_state is not None:
+        state_str = "🟢 Active" if new_state else "⏸️ Paused"
+        acc = account_manager.get_account(acc_id)
+        lbl = acc.get("label", acc_id) if acc else acc_id
+        await query.answer(f"{lbl} is now {state_str}")
+
+    text = format_accounts_text()
+    accounts = account_manager.get_all()
+    await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=get_accounts_keyboard(accounts))
+
+
+async def acc_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Removes an account via inline button."""
+    query = update.callback_query
+    await query.answer()
+
+    acc_id = query.data.split(":")[1]
+    account_manager.remove_account(acc_id)
+
+    text = format_accounts_text()
+    accounts = account_manager.get_all()
+    await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=get_accounts_keyboard(accounts))
+
+
+async def add_account_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Slash command to add an account: /addaccount <token> [label] [balance]"""
+    if not context.args or len(context.args) == 0:
+        return await acc_add_prompt_handler(update, context)
+
+    token = context.args[0]
+    label = context.args[1] if len(context.args) > 1 and not context.args[1].replace(".", "", 1).isdigit() else None
+    balance = 0.0
+
+    for arg in context.args[1:]:
+        if arg.replace(".", "", 1).isdigit():
+            balance = float(arg)
+            break
+
+    acc = account_manager.add_account(token=token, label=label, wallet_balance=balance)
+    await update.message.reply_text(
+        f"✅ <b>Account Added / Updated:</b> {html.escape(acc.get('label'))} (₹{acc.get('wallet_balance'):,.0f})",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_accounts_keyboard(account_manager.get_all()),
+    )
+
+
+async def set_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Slash command to update an account balance: /setbalance <acc_id_or_number> <amount>"""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "ℹ️ <b>Usage:</b> <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code>\n"
+            "<b>Example:</b> <code>/setbalance acc_1 1084</code> or <code>/setbalance 1 5000</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    raw_id = context.args[0].strip().lower()
+    acc_id = f"acc_{raw_id}" if raw_id.isdigit() else raw_id
+    try:
+        amount = float(context.args[1].replace(",", "").replace("₹", ""))
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amount. Example: <code>/setbalance acc_1 1084</code>", parse_mode=ParseMode.HTML)
+        return
+
+    success = account_manager.update_balance(acc_id, amount)
+    if success:
+        acc = account_manager.get_account(acc_id)
+        lbl = acc.get("label", acc_id) if acc else acc_id
+        await update.message.reply_text(
+            f"✅ <b>Balance Updated:</b> {html.escape(lbl)} wallet balance is now <b>₹{amount:,.0f}</b>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_accounts_keyboard(account_manager.get_all()),
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Account <code>{html.escape(acc_id)}</code> nahi mila! Check <code>/accounts</code>.",
+            parse_mode=ParseMode.HTML,
+        )
+

@@ -3,7 +3,7 @@ Telegram inline keyboards for the PlayStation Gift Card Buyer Bot.
 Provides rich interactive UI buttons for platform selection, denominations, login modes, and confirmations.
 """
 
-from typing import List
+from typing import List, Dict, Any, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import config
 
@@ -15,15 +15,40 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🛒 Instant Buy Now", callback_data="buy_start"),
         ],
         [
-            InlineKeyboardButton("🔑 Account Login", callback_data="login_start"),
+            InlineKeyboardButton("👥 Manage Accounts (5-10 AC)", callback_data="accounts_view"),
             InlineKeyboardButton("📊 Status & Sessions", callback_data="status_check"),
         ],
         [
+            InlineKeyboardButton("🔑 Account Login / Token", callback_data="login_start"),
             InlineKeyboardButton("⚙️ Toggle Sim Mode", callback_data="toggle_sim"),
+        ],
+        [
             InlineKeyboardButton("📖 Help & Guide", callback_data="help_info"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def get_accounts_keyboard(accounts: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    """Builds interactive keyboard for managing multiple accounts."""
+    rows = [
+        [
+            InlineKeyboardButton("➕ Add Account (Token)", callback_data="acc_add_prompt"),
+            InlineKeyboardButton("🔄 Refresh Balances", callback_data="accounts_view"),
+        ]
+    ]
+    for acc in accounts:
+        status_icon = "🟢" if acc.get("is_active", True) else "⏸️"
+        label = acc.get("label", acc.get("id"))
+        bal = float(acc.get("wallet_balance", 0.0))
+        btn_text = f"{status_icon} {label} (₹{bal:,.0f})"
+        rows.append([
+            InlineKeyboardButton(btn_text, callback_data=f"acc_toggle:{acc['id']}"),
+            InlineKeyboardButton("❌ Remove", callback_data=f"acc_remove:{acc['id']}"),
+        ])
+    rows.append([
+        InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu"),
+    ])
+    return InlineKeyboardMarkup(rows)
 
 def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
     """Keyboard to cancel active auto-sniper."""
