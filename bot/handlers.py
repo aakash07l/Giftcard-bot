@@ -97,6 +97,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id if user else 0
     first_name = html.escape(user.first_name if user and user.first_name else "Gamer")
 
+    try:
+        await account_manager.sync_all_balances()
+    except Exception as e:
+        logger.debug(f"Live balance sync notice: {e}")
+
     welcome_msg = (
         f"👋 <b>Welcome, {first_name}!</b>\n\n"
         + format_status_text(user_id)
@@ -122,9 +127,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 <b>PlayStation Buyer Bot — User Guide</b>\n\n"
         "⚡ <b>Commands:</b>\n"
         "• <code>/start</code> — Main dashboard & menu\n"
-        "• <code>/accounts</code> — 👥 Manage 5-10 Rooter Accounts (View, Toggle, Balance)\n"
-        "• <code>/addaccount &lt;token&gt; [label] [balance]</code> — Add a Rooter account\n"
-        "• <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code> — Set account wallet balance\n"
+        "• <code>/accounts</code> — 👥 Manage 5-10 Rooter Accounts (Auto Live Balance Sync 🟢)\n"
+        "• <code>/addaccount &lt;token&gt; [label]</code> — Add a Rooter account (Auto fetches live balance!)\n"
+        "• <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code> — Set optional manual balance override\n"
         "• <code>/snipe</code> — 🎯 24/7 Restock Auto-Sniper (Parallel buy across all active accounts!)\n"
         "• <code>/stop</code> — 🛑 Stop active 24/7 restock monitoring\n"
         "• <code>/buy</code> — Instant single purchase flow\n"
@@ -134,7 +139,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/cancel</code> — Reset active operations\n\n"
         "🎯 <b>Multi-Account Restock Sniper:</b>\n"
         "1. Add your 5 to 10 Rooter accounts with <code>/addaccount</code> or the 👥 button.\n"
-        "2. Set each account's wallet balance with <code>/setbalance &lt;id&gt; &lt;amount&gt;</code>.\n"
+        "2. Balance is automatically fetched in real-time from Rooter's live API.\n"
         "3. Send <code>/snipe</code> -> select <b>Any PlayStation Card</b>.\n"
         f"4. Bot checks stock every {config.SNIPE_INTERVAL_SECONDS}s. When stock lands, bot automatically picks the largest affordable denomination for each account and buys in parallel simultaneously!"
     )
@@ -155,6 +160,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /status command."""
     user_id = update.effective_user.id if update.effective_user else 0
+    try:
+        await account_manager.sync_all_balances()
+    except Exception as e:
+        logger.debug(f"Live balance sync notice: {e}")
     text = format_status_text(user_id)
     if update.callback_query:
         await update.callback_query.answer()
@@ -522,6 +531,12 @@ async def run_sniper_loop(
             if is_in_stock:
                 logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED on {platform}: {available_denominations}!")
 
+                # Live sync balances right when stock arrives to ensure accurate balance
+                try:
+                    await account_manager.sync_all_balances()
+                except Exception as s_err:
+                    logger.warning(f"[Sniper] Live balance sync warning: {s_err}")
+
                 # Retrieve all active accounts for multi-account buying
                 active_accounts = account_manager.get_active()
                 if not active_accounts:
@@ -529,7 +544,7 @@ async def run_sniper_loop(
                         "id": "acc_1",
                         "label": "Account 1 (Primary)",
                         "token": config.ROOTER_AUTH_TOKEN,
-                        "wallet_balance": 1084.0,
+                        "wallet_balance": 0.0,
                     }]
 
                 order_tasks = []
@@ -1244,7 +1259,7 @@ def format_accounts_text() -> str:
             "👥 <b>Rooter Accounts (0 Configured)</b>\n\n"
             "Abhi koi account configured nahi hai.\n"
             "Naya account add karne ke liye neeche diye button par click karein ya command use karein:\n"
-            "<code>/addaccount &lt;bearer_token&gt; [label] [balance]</code>"
+            "<code>/addaccount &lt;bearer_token&gt; [label]</code>"
         )
 
     active_accs = account_manager.get_active()
@@ -1255,7 +1270,7 @@ def format_accounts_text() -> str:
         "━━━━━━━━━━━━━━━━━━━━━━",
         f"• <b>Total Accounts:</b> {len(accounts)}",
         f"• <b>Active for Sniping:</b> 🟢 {len(active_accs)} / {len(accounts)}",
-        f"• <b>Combined Active Balance:</b> ₹{total_bal:,.0f}",
+        f"• <b>Combined Live Balance:</b> ₹{total_bal:,.2f}",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "<b>Registered Accounts:</b>",
     ]
@@ -1269,21 +1284,26 @@ def format_accounts_text() -> str:
         lines.append(
             f"{idx}. <b>{lbl}</b> [{status_icon}]\n"
             f"   • ID: <code>{acc.get('id')}</code> | UID: <code>{uid}</code>\n"
-            f"   • Wallet Balance: <b>₹{bal:,.0f}</b>\n"
+            f"   • Live Wallet Balance: <b>₹{bal:,.2f}</b> [Rooter Live 🟢]\n"
             f"   • Token: <code>{tok_preview}</code>"
         )
 
     lines.extend([
         "━━━━━━━━━━━━━━━━━━━━━━",
         "💡 <i>Tap an account button below to pause/resume it.</i>",
-        "💡 <i>Use <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code> to update wallet balance.</i>",
-        "💡 <i>Example: <code>/setbalance acc_1 1084</code></i>",
+        "💡 <i>Balances are automatically synced in real-time from Rooter!</i>",
+        "💡 <i>Optional override: <code>/setbalance &lt;acc_id&gt; &lt;amount&gt;</code></i>",
     ])
     return "\n".join(lines)
 
 
 async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays the multi-account dashboard and interactive buttons."""
+    """Displays the multi-account dashboard and interactive buttons with live balance sync."""
+    try:
+        await account_manager.sync_all_balances()
+    except Exception as e:
+        logger.debug(f"Live balance sync notice: {e}")
+
     text = format_accounts_text()
     accounts = account_manager.get_all()
     markup = get_accounts_keyboard(accounts)
@@ -1303,10 +1323,10 @@ async def acc_add_prompt_handler(update: Update, context: ContextTypes.DEFAULT_T
         "➕ <b>Add New Rooter Account (5-10 Multi-Account)</b>\n\n"
         "Apne naye Rooter account ka <b>Bearer Token</b> yahan chat me paste karein:\n\n"
         "💡 <b>Optional format:</b>\n"
-        "<code>&lt;bearer_token&gt; [label] [balance]</code>\n\n"
+        "<code>&lt;bearer_token&gt; [label]</code>\n\n"
         "<b>Example:</b>\n"
-        "<code>eyJhbGciOi... Account-2 5000</code>\n\n"
-        "<i>(Ya sirf token paste karein, label aur balance baad me bhi /setbalance se set ho sakta hai)</i>"
+        "<code>eyJhbGciOi... Account-2</code>\n\n"
+        "<i>(Balance set karne ki zaroorat nahi hai, bot Rooter se live balance auto-fetch kar lega!)</i>"
     )
     if query:
         await query.answer()
@@ -1341,13 +1361,13 @@ async def handle_add_account_received(update: Update, context: ContextTypes.DEFA
             label = parts[2]
 
     try:
-        acc = account_manager.add_account(token=token, label=label, wallet_balance=balance)
+        acc = await account_manager.add_account_async(token=token, label=label, wallet_balance=balance)
         success_text = (
             f"✅ <b>Account Added Successfully!</b>\n\n"
             f"• <b>Label:</b> {html.escape(acc.get('label'))}\n"
             f"• <b>ID:</b> <code>{acc.get('id')}</code>\n"
             f"• <b>User ID:</b> <code>{acc.get('user_id')}</code>\n"
-            f"• <b>Tracked Balance:</b> ₹{acc.get('wallet_balance'):,.0f}\n"
+            f"• <b>Live Wallet Balance:</b> <b>₹{acc.get('wallet_balance'):,.2f}</b> (Rooter Verified 🟢)\n"
             f"• <b>Status:</b> 🟢 Active for Auto-Snipe\n\n"
             f"Restock aane par ye account baaki sabhi accounts ke sath parallel me buy karega!"
         )
@@ -1409,9 +1429,9 @@ async def add_account_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             balance = float(arg)
             break
 
-    acc = account_manager.add_account(token=token, label=label, wallet_balance=balance)
+    acc = await account_manager.add_account_async(token=token, label=label, wallet_balance=balance)
     await update.message.reply_text(
-        f"✅ <b>Account Added / Updated:</b> {html.escape(acc.get('label'))} (₹{acc.get('wallet_balance'):,.0f})",
+        f"✅ <b>Account Added / Updated:</b> {html.escape(acc.get('label'))} (Live Balance: ₹{acc.get('wallet_balance'):,.2f})",
         parse_mode=ParseMode.HTML,
         reply_markup=get_accounts_keyboard(account_manager.get_all()),
     )

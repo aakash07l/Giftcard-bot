@@ -7,15 +7,18 @@ Persists data to sessions/accounts.json.
 import json
 import logging
 import base64
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import httpx
 
 import config
 
 logger = logging.getLogger(__name__)
 
 ACCOUNTS_FILE = config.SESSION_DIR / "accounts.json"
+ROOTER_WALLET_BALANCE_URL = "https://payments.rooter.io/wallet/balance"
 
 def extract_user_id(token: str) -> int:
     """Extracts Rooter userId from JWT Bearer token payload."""
@@ -29,6 +32,37 @@ def extract_user_id(token: str) -> int:
     except Exception:
         pass
     return 0
+
+async def fetch_live_balance_for_token(token: str) -> Optional[float]:
+    """Fetches real-time live wallet balance directly from Rooter payments API using Bearer token."""
+    clean_tok = token.strip()
+    if clean_tok.lower().startswith("bearer "):
+        clean_tok = clean_tok[7:].strip()
+    if not clean_tok:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {clean_tok}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(ROOTER_WALLET_BALANCE_URL, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                comp = data.get("component", {})
+                dep = float(comp.get("deposit", 0.0))
+                cred = float(comp.get("credit", 0.0))
+                vouch = float(comp.get("voucher", 0.0))
+                total = round(dep + cred + vouch, 2)
+                logger.info(f"Rooter live balance fetched: ₹{total:.2f} (dep={dep}, cred={cred}, vouch={vouch})")
+                return total
+            else:
+                logger.warning(f"Rooter balance API returned status {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch live Rooter balance: {e}")
+    return None
 
 class AccountManager:
     """Manages multiple Rooter user accounts for concurrent restock sniping."""
@@ -184,5 +218,63 @@ class AccountManager:
         """Returns the sum of wallet balances across all active accounts."""
         return sum(float(a.get("wallet_balance", 0.0)) for a in self.get_active())
 
+    async def refresh_account_balance(self, acc_id: str) -> Optional[float]:
+        """Fetches live balance for an account and updates it in memory and on disk."""
+        acc = self.get_account(acc_id)
+        if not acc or not acc.get("token"):
+            return None
+        live_bal = await fetch_live_balance_for_token(acc["token"])
+        if live_bal is not None:
+            acc["wallet_balance"] = live_bal
+            self._save()
+            return live_bal
+        return float(acc.get("wallet_balance", 0.0))
+
+    async def sync_all_balances(self) -> Dict[str, float]:
+        """Fetches real-time live balance for all registered accounts concurrently."""
+        tasks = []
+        for acc in self.accounts:
+            tok = acc.get("token", "")
+            if tok:
+                tasks.append((acc, fetch_live_balance_for_token(tok)))
+
+        if not tasks:
+            return {}
+
+        results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+        updated = {}
+        changed = False
+        for (acc, _), res in zip(tasks, results):
+            if isinstance(res, (int, float)):
+                acc["wallet_balance"] = float(res)
+                updated[acc["id"]] = float(res)
+                changed = True
+            else:
+                updated[acc["id"]] = float(acc.get("wallet_balance", 0.0))
+
+        if changed:
+            self._save()
+        return updated
+
+    async def add_account_async(
+        self,
+        token: str,
+        label: Optional[str] = None,
+        wallet_balance: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Adds a new account and immediately fetches its live wallet balance."""
+        clean_tok = token.strip()
+        if clean_tok.lower().startswith("bearer "):
+            clean_tok = clean_tok[7:].strip()
+
+        # If wallet_balance wasn't passed or is 0, fetch live balance immediately from Rooter API
+        if wallet_balance <= 0:
+            live_bal = await fetch_live_balance_for_token(clean_tok)
+            if live_bal is not None:
+                wallet_balance = live_bal
+
+        return self.add_account(token=clean_tok, label=label, wallet_balance=wallet_balance)
+
 # Global singleton
 account_manager = AccountManager()
+
