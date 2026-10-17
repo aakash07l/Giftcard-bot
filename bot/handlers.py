@@ -31,6 +31,7 @@ from bot.keyboards import (
     get_confirmation_keyboard,
     get_alternate_platform_keyboard,
     get_stop_snipe_keyboard,
+    get_playstore_stopped_keyboard,
     get_cancel_keyboard,
 )
 from services.browser_manager import browser_manager
@@ -72,7 +73,7 @@ def format_status_text(user_id: int) -> str:
     if sniper_info:
         denom_disp = sniper_info["denomination"]
         checks = sniper_info.get("attempts", 0)
-        p_label = "Google Play ₹10" if denom_disp == 10 else ("Any PSN (₹1k-₹5k)" if denom_disp == 0 else f"PSN ₹{denom_disp:,}")
+        p_label = "Any PSN (₹1k-₹5k)" if denom_disp == 0 else f"PSN ₹{denom_disp:,}"
         sniper_text = f"🟢 Active ({p_label} - <code>{checks}</code> checks)"
     else:
         sniper_text = "⚪ Inactive"
@@ -193,9 +194,8 @@ async def buy_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     context.user_data["buy_platform"] = "rooter"
     msg = (
-        "🛒 <b>Instant Buy — Rooter Shop</b>\n\n"
-        "Select the voucher denomination to buy using your Rooter wallet balance:\n"
-        "<i>(Tip: Aap <b>₹10 Google Play Code</b> se 1-time real test buy kar sakte hain!)</i>"
+        "🛒 <b>Instant Buy — Rooter Shop (PlayStation)</b>\n\n"
+        "Select the PlayStation Gift Card denomination to buy using your Rooter wallet balance:"
     )
     if query:
         await query.answer()
@@ -225,13 +225,25 @@ async def buy_denomination_selected(update: Update, context: ContextTypes.DEFAUL
     platform = parts[1]
     denomination = int(parts[2])
 
+    if denomination < 1000:
+        await query.edit_message_text(
+            text=(
+                "⚠️ <b>Play Store Buying Disabled!</b>\n\n"
+                "Google Play recharge code buying stop aur disable kar di gayi hai.\n"
+                "Bot ab sirf PlayStation Gift Cards (₹1,000 to ₹5,000) buy karne ke liye configured hai."
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_playstore_stopped_keyboard(),
+        )
+        return ConversationHandler.END
+
     context.user_data["buy_platform"] = platform
     context.user_data["buy_denomination"] = denomination
 
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
     mode_text = "🧪 SIMULATION (No funds deducted)" if config.SIMULATION_MODE else "⚡ LIVE (Real Checkout)"
-    prod_name = "Google Play Recharge Code" if denomination < 1000 else "PlayStation Gift Card"
-    price_tag = "₹8 (from Rooter Wallet)" if denomination == 10 else f"₹{denomination:,}"
+    prod_name = "PlayStation Gift Card"
+    price_tag = f"₹{denomination:,}"
 
     await query.edit_message_text(
         text=(
@@ -439,17 +451,11 @@ async def run_sniper_loop(
         page = await browser_context.new_page()
         is_any_mode = (denomination == 0)
         target_denomination = denomination
+        prod_name = "PlayStation Gift Card"
+        redeem_tip = "Redeem this immediately on your PlayStation console or app."
         if is_any_mode:
-            prod_name = "PlayStation Gift Card"
-            redeem_tip = "Redeem this immediately on your PlayStation console or app."
             start_desc = "Any PlayStation Gift Card (₹1,000 to ₹5,000)"
-        elif denomination < 1000:
-            prod_name = "Google Play Recharge Code"
-            redeem_tip = "Redeem this code in Google Play Store."
-            start_desc = f"{prod_name} ₹{denomination:,}"
         else:
-            prod_name = "PlayStation Gift Card"
-            redeem_tip = "Redeem this immediately on your PlayStation console or app."
             start_desc = f"{prod_name} ₹{denomination:,}"
 
         # Send immediate live confirmation to Telegram chat
@@ -480,11 +486,7 @@ async def run_sniper_loop(
             is_in_stock = False
             available_denominations = []
             try:
-                if denomination < 1000:
-                    is_in_stock = await service.check_is_in_stock(page, 10)
-                    if is_in_stock:
-                        available_denominations = [10]
-                elif is_any_mode:
+                if is_any_mode:
                     available_denominations = await service.get_in_stock_playstation_denominations(page)
                     is_in_stock = len(available_denominations) > 0
                 else:
@@ -503,7 +505,7 @@ async def run_sniper_loop(
                     except Exception:
                         pass
 
-            if attempts == 1 and not is_in_stock and (is_any_mode or denomination >= 1000):
+            if attempts == 1 and not is_in_stock:
                 status_desc = "PlayStation Gift Cards (₹1,000, ₹2,000, ₹3,000, ₹5,000)" if is_any_mode else f"{prod_name} ₹{denomination:,}"
                 try:
                     await bot.send_message(
@@ -537,10 +539,7 @@ async def run_sniper_loop(
                     target_d = None
                     target_q = 1
 
-                    if denomination < 1000:
-                        target_d = 10
-                        target_q = 1
-                    elif bal > 0:
+                    if bal > 0:
                         # High-to-low priority: 5000 -> 4000 -> 3000 -> 2000 -> 1000
                         for cand_d in available_denominations:
                             if cand_d <= bal:
@@ -786,6 +785,20 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
             await update.message.reply_text(text=warn_text, parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard())
         return ConversationHandler.END
 
+    # Reject Google Play / Play Store denominations
+    if 0 < denomination < 1000:
+        warn_text = (
+            "⚠️ <b>Play Store Buying Disabled!</b>\n\n"
+            "Google Play recharge code buying stop aur disable kar di gayi hai.\n"
+            "Bot ab sirf aur sirf <b>PlayStation Gift Cards (₹1,000 to ₹5,000)</b> buy karega.\n\n"
+            "👉 PlayStation sniper start karne ke liye <code>/snipe</code> dabayein!"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text=warn_text, parse_mode=ParseMode.HTML, reply_markup=get_playstore_stopped_keyboard())
+        else:
+            await update.message.reply_text(text=warn_text, parse_mode=ParseMode.HTML, reply_markup=get_playstore_stopped_keyboard())
+        return ConversationHandler.END
+
     # Cancel any previous running sniper
     if user_id in ACTIVE_SNIPERS:
         old_sniper = ACTIVE_SNIPERS.pop(user_id)
@@ -820,9 +833,6 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
     if denomination == 0:
         prod_name = "⚡ Any PlayStation Card (₹1,000 to ₹5,000)"
         note_text = "✅ <b>Multi-Card Restock Monitor Active:</b> Rooter par ₹1,000, ₹2,000, ₹3,000 ya ₹5,000 me se jo bhi denomination pehle stock me aayega, bot usko turant 1 second me buy kar lega!"
-    elif denomination < 1000:
-        prod_name = "Google Play Recharge Code (₹10 Real Test Snipe)"
-        note_text = "✅ <b>1-Time Test Snipe Running:</b> Bot Google Play ₹10 code ko Rooter Wallet balance se turant 1 baar buy karega aur complete ho jayega!"
     else:
         prod_name = f"PlayStation ₹{denomination:,}"
         note_text = f"✅ <b>24/7 Restock Monitor Active:</b> Jaise hi PlayStation voucher stock me aayega, bot bina kisi delay ke turant buy kar lega aur voucher code aapko yahan message kar dega."
@@ -862,10 +872,15 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Check if arguments provided in slash command, e.g. /snipe any, /snipe 1000, /snipe 2000
     if context.args and len(context.args) > 0:
         raw_arg = context.args[0].lower().strip().replace("k", "000").replace("₹", "").replace("rs", "").replace(".", "")
-        if raw_arg in ("any", "all", "auto", "0"):
+        if raw_arg in ("stop", "playstore", "googleplay", "gplay", "stop_playstore", "10"):
+            return await stop_playstore_handler(update, context)
+        elif raw_arg in ("any", "all", "auto", "0"):
             return await launch_sniper(update, context, "rooter", 0)
         elif raw_arg.isdigit():
-            return await launch_sniper(update, context, "rooter", int(raw_arg))
+            val = int(raw_arg)
+            if val < 1000:
+                return await stop_playstore_handler(update, context)
+            return await launch_sniper(update, context, "rooter", val)
 
     # If a sniper is already running for this user, cancel it to allow starting fresh
     if user_id in ACTIVE_SNIPERS:
@@ -960,6 +975,66 @@ async def stop_snipe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text=msg,
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
+        )
+
+async def stop_playstore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stops Google Play / Play Store buying and locks the bot into PlayStation Only mode."""
+    user_id = update.effective_user.id if update.effective_user else 0
+    query = update.callback_query
+
+    was_running = False
+    was_playstore = False
+    target_name = "None"
+
+    if user_id in ACTIVE_SNIPERS:
+        sniper_data = ACTIVE_SNIPERS.pop(user_id)
+        was_running = True
+        stop_event = sniper_data.get("stop_event")
+        if stop_event:
+            stop_event.set()
+        task = sniper_data.get("task")
+        if task and not task.done():
+            task.cancel()
+
+        d = sniper_data.get("denomination", 0)
+        if d == 10 or (0 < d < 1000):
+            was_playstore = True
+            target_name = "Google Play Recharge Code"
+        elif d == 0:
+            target_name = "Any PlayStation Card (₹1k-₹5k)"
+        else:
+            target_name = f"PlayStation ₹{d:,}"
+
+    run_status = ""
+    if was_playstore:
+        run_status = f"🛑 <b>Active Play Store Sniper Stopped:</b> <code>{target_name}</code> has been terminated.\n\n"
+    elif was_running:
+        run_status = f"🛑 <b>Previous Monitor Stopped:</b> <code>{target_name}</code> has been paused.\n\n"
+
+    msg = (
+        "🛑 <b>Play Store Auto-Buy STOPPED!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{run_status}"
+        "✅ <b>PlayStation Only Mode Active:</b>\n"
+        "• <b>Play Store Gift Cards:</b> ❌ Completely Stopped & Disabled\n"
+        "• <b>Target:</b> 🎮 <b>PlayStation Gift Cards ONLY (₹1,000 to ₹5,000)</b>\n"
+        "• <b>Multi-Account Sniper:</b> Stock aane par sabhi 5-10 accounts balance-aware parallel buy karenge!\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "👇 <i>PlayStation 24/7 restock monitor start karne ke liye neeche button dabayein:</i>"
+    )
+
+    if query:
+        await query.answer("Play Store buying stopped. Only PlayStation mode active.")
+        await query.edit_message_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_playstore_stopped_keyboard(),
+        )
+    else:
+        await update.message.reply_text(
+            text=msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_playstore_stopped_keyboard(),
         )
 
 # ==================== LOGIN WORKFLOW ====================

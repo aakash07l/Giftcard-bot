@@ -62,6 +62,7 @@ from bot.handlers import (
     acc_remove_callback,
     add_account_command,
     set_balance_command,
+    stop_playstore_handler,
 )
 from services.browser_manager import browser_manager
 
@@ -201,6 +202,8 @@ def build_application():
     app.add_handler(CommandHandler("accounts", accounts_command))
     app.add_handler(CommandHandler("addaccount", add_account_command))
     app.add_handler(CommandHandler("setbalance", set_balance_command))
+    app.add_handler(CommandHandler("stop_playstore", stop_playstore_handler))
+    app.add_handler(CommandHandler("psonly", stop_playstore_handler))
     app.add_handler(CommandHandler("toggle_sim", toggle_sim_handler))
     app.add_handler(CommandHandler("cancel", cancel_flow))
 
@@ -213,6 +216,7 @@ def build_application():
     app.add_handler(CallbackQueryHandler(help_command, pattern="^help_info$"))
     app.add_handler(CallbackQueryHandler(toggle_sim_handler, pattern="^toggle_sim$"))
     app.add_handler(CallbackQueryHandler(stop_snipe_handler, pattern="^stop_snipe_action$"))
+    app.add_handler(CallbackQueryHandler(stop_playstore_handler, pattern="^stop_playstore_action$"))
     app.add_handler(CallbackQueryHandler(cancel_flow, pattern="^cancel_action$"))
 
     # Global error handler

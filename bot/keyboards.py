@@ -11,18 +11,19 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Builds the main menu dashboard keyboard."""
     keyboard = [
         [
-            InlineKeyboardButton("🎯 Auto-Snipe Stock (24/7)", callback_data="snipe_start"),
-            InlineKeyboardButton("🛒 Instant Buy Now", callback_data="buy_start"),
+            InlineKeyboardButton("🎯 Auto-Snipe PlayStation (24/7)", callback_data="snipe_start"),
+            InlineKeyboardButton("🛒 Instant Buy PSN", callback_data="buy_start"),
         ],
         [
             InlineKeyboardButton("👥 Manage Accounts (5-10 AC)", callback_data="accounts_view"),
             InlineKeyboardButton("📊 Status & Sessions", callback_data="status_check"),
         ],
         [
-            InlineKeyboardButton("🔑 Account Login / Token", callback_data="login_start"),
+            InlineKeyboardButton("🛑 Stop Play Store / Auto-Sniper", callback_data="stop_playstore_action"),
             InlineKeyboardButton("⚙️ Toggle Sim Mode", callback_data="toggle_sim"),
         ],
         [
+            InlineKeyboardButton("🔑 Account Login / Token", callback_data="login_start"),
             InlineKeyboardButton("📖 Help & Guide", callback_data="help_info"),
         ],
     ]
@@ -51,9 +52,19 @@ def get_accounts_keyboard(accounts: List[Dict[str, Any]]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(rows)
 
 def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard to cancel active auto-sniper."""
+    """Keyboard to cancel active auto-sniper or stop Play Store."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛑 Stop Auto-Sniper", callback_data="stop_snipe_action")]
+        [InlineKeyboardButton("🛑 Stop Auto-Sniper", callback_data="stop_snipe_action")],
+        [InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action")],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")],
+    ])
+
+def get_playstore_stopped_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard displayed after stopping Play Store buying."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎯 Auto-Snipe Any PlayStation Card", callback_data="snipe_denom:rooter:0")],
+        [InlineKeyboardButton("🎮 Select Specific PSN Card", callback_data="snipe_start")],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")],
     ])
 
 def get_platforms_keyboard(prefix: str = "plat_select") -> InlineKeyboardMarkup:
@@ -84,19 +95,15 @@ def get_login_methods_keyboard(platform: str = "rooter") -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(keyboard)
 
 def get_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
-    """Keyboard to pick PlayStation or Google Play voucher denomination."""
+    """Keyboard to pick PlayStation voucher denomination (PlayStation Only)."""
     if not denominations:
         platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
-    rows = []
-    # Test buy button for ₹10 Google Play Code
-    if 10 in denominations:
-        rows.append([
-            InlineKeyboardButton("🧪 ₹10 Google Play (1-Time Real Test Buy)", callback_data="denom_pick:rooter:10")
-        ])
+    # Filter to strictly PlayStation (exclude any test/google play codes)
+    ps_denoms = [d for d in denominations if d >= 1000]
 
-    ps_denoms = [d for d in denominations if d != 10]
+    rows = []
     current_row = []
     for denom in ps_denoms:
         btn = InlineKeyboardButton(f"🎮 ₹{denom:,} PSN", callback_data=f"denom_pick:rooter:{denom}")
@@ -108,29 +115,27 @@ def get_denominations_keyboard(platform: str = "rooter", denominations: List[int
         rows.append(current_row)
 
     rows.append([
+        InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action"),
+    ])
+    rows.append([
         InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
     return InlineKeyboardMarkup(rows)
 
 def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
-    """Keyboard to pick voucher denomination for Auto-Sniper."""
+    """Keyboard to pick voucher denomination for Auto-Sniper (PlayStation Only)."""
     if not denominations:
         platform_info = config.PLATFORMS.get("rooter", {})
         denominations = platform_info.get("supported_denominations", config.DEFAULT_DENOMINATIONS)
 
     rows = [
         [
-            InlineKeyboardButton("⚡ Any PlayStation Card (Jo Bhi Stock Me Aaye)", callback_data="snipe_denom:rooter:0")
+            InlineKeyboardButton("⚡ Any PlayStation Card (₹1k - ₹5k Auto)", callback_data="snipe_denom:rooter:0")
         ]
     ]
-    # Test buy button for ₹10 Google Play Code
-    if 10 in denominations:
-        rows.append([
-            InlineKeyboardButton("🧪 ₹10 Google Play (1-Time Real Test Snipe)", callback_data="snipe_denom:rooter:10")
-        ])
 
-    ps_denoms = [d for d in denominations if d != 10]
+    ps_denoms = [d for d in denominations if d >= 1000]
     current_row = []
     for denom in ps_denoms:
         btn = InlineKeyboardButton(f"🎮 ₹{denom:,} PSN", callback_data=f"snipe_denom:rooter:{denom}")
@@ -142,6 +147,9 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
         rows.append(current_row)
 
     rows.append([
+        InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action"),
+    ])
+    rows.append([
         InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
@@ -150,7 +158,7 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
 
 def get_confirmation_keyboard(platform: str = "rooter", denomination: int = 1000) -> InlineKeyboardMarkup:
     """Keyboard to confirm purchase before triggering Playwright headless checkout."""
-    label = "🚀 Confirm & Buy Google Play ₹10" if denomination == 10 else f"🚀 Confirm & Buy PlayStation ₹{denomination:,}"
+    label = f"🚀 Confirm & Buy PlayStation ₹{denomination:,}"
     keyboard = [
         [
             InlineKeyboardButton(label, callback_data=f"confirm_buy:rooter:{denomination}"),

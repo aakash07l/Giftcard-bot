@@ -53,13 +53,13 @@ PLATFORMS = {
         "name": "Rooter Shop",
         "url": ROOTER_PLAYSTATION_URL,
         "google_play_url": ROOTER_GOOGLE_PLAY_URL,
-        "search_query": "PlayStation / Google Play",
-        "description": "Gaming, PlayStation, and Google Play voucher marketplace",
-        "supported_denominations": [10, 1000, 2000, 3000, 4000, 5000],
+        "search_query": "PlayStation Gift Cards",
+        "description": "Gaming and PlayStation voucher marketplace",
+        "supported_denominations": [1000, 2000, 3000, 4000, 5000],
     },
 }
 
-DEFAULT_DENOMINATIONS = [10, 1000, 2000, 3000, 4000, 5000]
+DEFAULT_DENOMINATIONS = [1000, 2000, 3000, 4000, 5000]
 
 # Auto-Sniper Restock Refresh Interval in Seconds (Default: 29s)
 SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "29"))
