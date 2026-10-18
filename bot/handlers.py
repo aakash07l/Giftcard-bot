@@ -531,12 +531,6 @@ async def run_sniper_loop(
             if is_in_stock:
                 logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED on {platform}: {available_denominations}!")
 
-                # Live sync balances right when stock arrives to ensure accurate balance
-                try:
-                    await account_manager.sync_all_balances()
-                except Exception as s_err:
-                    logger.warning(f"[Sniper] Live balance sync warning: {s_err}")
-
                 # Retrieve all active accounts for multi-account buying
                 active_accounts = account_manager.get_active()
                 if not active_accounts:
@@ -572,23 +566,22 @@ async def run_sniper_loop(
                     else:
                         min_avail = min(available_denominations) if available_denominations else 1000
                         logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < lowest in-stock card ₹{min_avail:,}")
-                        try:
-                            await bot.send_message(
+                        asyncio.create_task(
+                            bot.send_message(
                                 chat_id=chat_id,
                                 text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{min_avail:,}.",
                                 parse_mode=ParseMode.HTML,
                             )
-                        except Exception:
-                            pass
+                        )
 
                 if not order_tasks:
                     logger.warning("[Sniper] Stock detected but no active accounts have sufficient balance.")
                     continue
 
-                # Notify Telegram user immediately of multi-account execution
+                # Notify Telegram user asynchronously in background so checkout is NOT delayed by even 1ms
                 acc_summary = ", ".join([f"{a.get('label', a['id'])} (₹{d:,} x{q})" for a, d, q in order_tasks])
-                try:
-                    await bot.send_message(
+                asyncio.create_task(
+                    bot.send_message(
                         chat_id=chat_id,
                         text=(
                             f"🚨 <b>STOCK DETECTED!</b>\n\n"
@@ -600,13 +593,30 @@ async def run_sniper_loop(
                         ),
                         parse_mode=ParseMode.HTML,
                     )
-                except Exception:
-                    pass
+                )
 
-                # Execute parallel buy across all accounts simultaneously using asyncio.gather
-                async def execute_account_order(acc_data, d_val, q_val):
+                # Execute orders: Account 1 buys INSTANTLY on the already-loaded monitor page (Zero Load Lag)
+                # Additional accounts execute in isolated parallel browser contexts
+                async def execute_account_order(idx, acc_data, d_val, q_val):
                     acc_tok = acc_data.get("token") or config.ROOTER_AUTH_TOKEN
                     acc_lbl = acc_data.get("label", acc_data.get("id"))
+
+                    if idx == 0:
+                        # Account 1 fires directly on the existing live page! Zero navigation delay (<50ms)!
+                        try:
+                            res = await service.execute_buy_flow(
+                                page=page,
+                                denomination=d_val,
+                                quantity=q_val,
+                                account_label=acc_lbl,
+                                simulation=config.SIMULATION_MODE,
+                            )
+                            return (acc_data, d_val, q_val, res)
+                        except Exception as e1:
+                            logger.error(f"[Sniper] Primary account error on monitor page: {e1}")
+                            return (acc_data, d_val, q_val, PurchaseResult(success=False, platform="rooter", denomination=d_val, message=str(e1)))
+
+                    # Accounts 2..N use parallel isolated contexts
                     acc_ctx = await browser_manager.create_context(custom_token=acc_tok)
                     acc_page = await acc_ctx.new_page()
                     try:
@@ -626,14 +636,16 @@ async def run_sniper_loop(
                             pass
 
                 results = await asyncio.gather(
-                    *[execute_account_order(a, d, q) for a, d, q in order_tasks],
+                    *[execute_account_order(i, a, d, q) for i, (a, d, q) in enumerate(order_tasks)],
                     return_exceptions=True
                 )
 
                 any_success = False
+                failure_messages = []
                 for item in results:
                     if isinstance(item, Exception):
                         logger.error(f"[Sniper] Account order exception: {item}")
+                        failure_messages.append(f"Unexpected error: {str(item)[:120]}")
                         continue
 
                     acc_data, d_val, q_val, result = item
@@ -670,12 +682,15 @@ async def run_sniper_loop(
                             f"✨ <i>Auto-Sniper successfully claimed your vouchers!</i>\n"
                             f"{redeem_tip}"
                         )
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=success_text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=get_main_menu_keyboard(),
-                        )
+                        try:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=success_text,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=get_main_menu_keyboard(),
+                            )
+                        except Exception as me:
+                            logger.warning(f"Error sending success message: {me}")
 
                         shot_file = result.error_screenshot
                         if shot_file and os.path.exists(shot_file):
@@ -690,31 +705,39 @@ async def run_sniper_loop(
                                 pass
                     else:
                         logger.warning(f"[Sniper] Purchase failed for {acc_lbl}: {result.message}")
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=(
-                                f"⚠️ <b>Sniper Alert ({acc_lbl}):</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
-                                f"<code>{html.escape(result.message)}</code>"
-                            ),
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=get_stop_snipe_keyboard(),
-                        )
+                        failure_messages.append(f"{acc_lbl}: {result.message}")
+                        try:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=(
+                                    f"⚠️ <b>Sniper Alert ({acc_lbl}):</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
+                                    f"<code>{html.escape(result.message)}</code>"
+                                ),
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=get_stop_snipe_keyboard(),
+                            )
+                        except Exception as me:
+                            logger.warning(f"Error sending account alert: {me}")
 
                 if any_success:
                     logger.info("[Sniper] Purchase completed successfully for account(s). Finishing sniper run.")
                     break
                 else:
-                    logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {result.message}")
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"⚠️ <b>Sniper Alert:</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
-                            f"<code>{html.escape(result.message)}</code>\n\n"
-                            f"<i>Monitoring will continue in the next cycle...</i>"
-                        ),
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=get_stop_snipe_keyboard(),
-                    )
+                    last_msg = failure_messages[0] if failure_messages else "Checkout could not be confirmed."
+                    logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {last_msg}")
+                    try:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"⚠️ <b>Sniper Alert:</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
+                                f"<code>{html.escape(last_msg)}</code>\n\n"
+                                f"<i>Monitoring will continue in the next cycle...</i>"
+                            ),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_stop_snipe_keyboard(),
+                        )
+                    except Exception as me:
+                        logger.warning(f"Error sending final sniper alert: {me}")
 
             # Heartbeat message (Disabled by default to avoid chat spam and save credit)
             if config.ENABLE_SNIPER_HEARTBEAT and attempts % 20 == 0:
