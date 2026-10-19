@@ -450,7 +450,6 @@ class RooterService(BasePlatform):
                 if await buy_btn.is_visible(timeout=500):
                     btn_text = (await buy_btn.inner_text()).lower()
                     if "out of stock" in btn_text:
-                        # Wait a short moment for React state to refresh
                         await page.wait_for_timeout(200)
                         continue
                     try:
@@ -467,71 +466,86 @@ class RooterService(BasePlatform):
                 await page.wait_for_timeout(100)
 
             # Wait briefly for Delivery Details modal or payment drawer
-            delivery_modal = page.locator(".mantine-Modal-content, div[role='dialog'], text='Delivery Details'").first
+            delivery_modal = page.locator(".mantine-Modal-content, div[role='dialog']").first
             try:
                 await delivery_modal.wait_for(state="visible", timeout=2500)
             except Exception:
                 pass
 
-            # Click the 'Pay via wallet' / submit button inside the Delivery Details modal
-            modal_btn_selector = (
-                ".mantine-Modal-content button[data-testid='proceed-to-pay'], "
-                ".mantine-Modal-content button[testid='proceed-to-pay'], "
-                ".mantine-Modal-content button[data-testid='add-address-btn'], "
-                ".mantine-Modal-content button[testid='add-address-btn'], "
-                ".mantine-Modal-content button:has-text('Pay via wallet'), "
-                ".mantine-Modal-content button:has-text('Pay ₹'), "
-                ".mantine-Modal-content button:has-text('Proceed to Pay'), "
-                ".mantine-Modal-content button:has-text('Proceed'), "
-                "div[role='dialog'] button:has-text('Pay via wallet'), "
-                "div[role='dialog'] button:has-text('Pay ₹'), "
-                "div[role='dialog'] button[type='submit']"
-            )
-            modal_pay_btn = page.locator(modal_btn_selector).last
-            if await modal_pay_btn.is_visible(timeout=3000):
-                if progress_callback:
-                    await progress_callback("Confirming Delivery Details & submitting order...", "📝")
-                logger.info("[Rooter] Clicking Pay via wallet / Proceed inside modal...")
+            # If Delivery Details modal appeared, fill missing inputs so form validation passes
+            if await delivery_modal.is_visible():
                 try:
-                    await modal_pay_btn.click(force=True, timeout=3000)
+                    name_inp = delivery_modal.locator("input[placeholder*='name'], input[placeholder*='Name']").first
+                    if await name_inp.is_visible(timeout=400):
+                        val = await name_inp.input_value()
+                        if not val:
+                            await name_inp.fill("Gamer")
+                    email_inp = delivery_modal.locator("input[placeholder*='Email'], input[placeholder*='email']").first
+                    if await email_inp.is_visible(timeout=400):
+                        val = await email_inp.input_value()
+                        if not val:
+                            await email_inp.fill("rooter.gamer@gmail.com")
                 except Exception:
+                    pass
+
+                # Click submit / Pay via wallet inside Delivery Details modal
+                modal_btn_selector = (
+                    ".mantine-Modal-content button:has-text('Pay via wallet'), "
+                    ".mantine-Modal-content button:has-text('Pay ₹'), "
+                    ".mantine-Modal-content button:has-text('Proceed to Pay'), "
+                    ".mantine-Modal-content button:has-text('Proceed'), "
+                    ".mantine-Modal-content button[type='submit'], "
+                    "div[role='dialog'] button:has-text('Pay via wallet'), "
+                    "div[role='dialog'] button:has-text('Pay ₹'), "
+                    "div[role='dialog'] button[type='submit']"
+                )
+                modal_pay_btn = page.locator(modal_btn_selector).last
+                if await modal_pay_btn.is_visible(timeout=2500):
+                    if progress_callback:
+                        await progress_callback("Confirming Delivery Details & submitting order...", "📝")
+                    logger.info("[Rooter] Clicking Pay via wallet / Proceed inside modal...")
                     try:
-                        await modal_pay_btn.dispatch_event("click")
+                        await modal_pay_btn.click(force=True, timeout=2500)
                     except Exception:
-                        pass
-                await page.wait_for_timeout(1500)
+                        try:
+                            await modal_pay_btn.dispatch_event("click")
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(1000)
 
             # Close coupon or offer popup if shown
-            close_coupon = page.locator("button:has-text('Skip'), svg[class*='close'], button[aria-label*='Close']").first
-            if await close_coupon.is_visible(timeout=1000):
-                try:
-                    await close_coupon.click(force=True, timeout=800)
-                except Exception:
-                    pass
+            offers_dialog = page.locator("div[role='dialog']:has-text('Offers'), .mantine-Modal-content:has-text('Offers')").first
+            if await offers_dialog.is_visible(timeout=1000):
+                close_btn = offers_dialog.locator("button[aria-label*='Close'], svg, button:has-text('Skip')").first
+                if await close_btn.is_visible(timeout=800):
+                    try:
+                        await close_btn.click(force=True, timeout=800)
+                        await page.wait_for_timeout(300)
+                    except Exception:
+                        pass
 
-            # Select Rooter Wallet / Balance payment method if presented
-            wallet_opt = page.locator("div, span, label").filter(has_text=re.compile(r"(?:Rooter\s*Wallet|Wallet\s*Balance|Pay\s*via\s*Wallet|Rooter\s*Pay|Rooter\s*Credits)", re.IGNORECASE)).first
-            if await wallet_opt.is_visible(timeout=1500):
-                try:
-                    await wallet_opt.click(force=True, timeout=1500)
-                    await page.wait_for_timeout(300)
-                except Exception:
-                    pass
+            # If the page still has final 'Pay via wallet' button active, click it
+            final_pay_btn = page.locator("button[data-testid='add-address-btn'], button[data-testid='proceed-to-pay'], button:has-text('Pay via wallet')").first
+            if await final_pay_btn.is_visible(timeout=1000):
+                btn_txt = (await final_pay_btn.inner_text()).lower()
+                if "pay via wallet" in btn_txt or "proceed" in btn_txt:
+                    try:
+                        await final_pay_btn.click(force=True, timeout=2000)
+                    except Exception:
+                        pass
 
-            # Confirm payment / final proceed button if modal is still open
-            confirm_pay = page.locator(".mantine-Modal-content button:has-text('Pay via wallet'), button:has-text('Pay via wallet'), button:has-text('Pay Now'), button:has-text('Proceed to Pay')").last
-            if await confirm_pay.is_visible(timeout=1500):
-                try:
-                    await confirm_pay.click(force=True, timeout=2000)
-                    await page.wait_for_timeout(2000)
-                except Exception:
-                    pass
+            # Wait up to 6s for Rooter to process payment and navigate to order confirmation page
+            try:
+                await page.wait_for_url(re.compile(r".*/order/.*"), timeout=6000)
+            except Exception:
+                pass
 
             # Capture confirmation screenshot
             shot_path = await browser_manager.capture_screenshot(page, f"order_{prod_info['type']}_{denomination}")
 
-            # Inspect page content for voucher code or errors
+            current_url = page.url
             body_content = await page.locator("body").inner_text()
+            is_order_page = "/order/" in current_url
 
             # Check for error indicators
             if "insufficient" in body_content.lower() or "low balance" in body_content.lower():
@@ -539,101 +553,59 @@ class RooterService(BasePlatform):
                     success=False,
                     platform="rooter",
                     denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
                     message="Rooter wallet balance insufficient for this purchase.",
                     error_screenshot=shot_path,
                 )
 
-            # Check if login modal unexpectedly appeared (e.g. auth expired or not logged in)
-            is_login_modal = any(
-                p in body_content.lower()
-                for p in [
-                    "login / sign up",
-                    "login / register",
-                    "enter your mobile number",
-                    "enter mobile number",
-                    "continue with google",
-                    "have a referral code",
-                ]
-            )
-            if is_login_modal:
-                return PurchaseResult(
-                    success=False,
-                    platform="rooter",
-                    denomination=denomination,
-                    message="Rooter session expired or not logged in! Rooter login popup appeared. Please send /login to bot and paste your Bearer token, or set ROOTER_AUTH_TOKEN in Railway variables.",
-                    error_screenshot=shot_path,
-                )
-
-            # Search for Code, PIN, Order ID on current page
-            code_match = re.search(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
-            if not code_match and prod_info["type"] == "google_play":
-                gp_match = re.search(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", body_content, re.IGNORECASE)
-                if not gp_match:
-                    gp_match = re.search(r"\b([A-Z0-9]{16})\b", body_content)
-                if gp_match:
-                    code_match = gp_match
-
-            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", body_content, re.IGNORECASE)
-            order_match = re.search(r"(?:Order\s*Id|Txn\s*ID|Reference)[\s:]*#?([A-Z0-9_-]+)", body_content, re.IGNORECASE)
-
-            # Success indicators
-            success_indicators = [
-                "delivered successfully", "items delivered", "item purchased", "coupon codes",
-                "paid amount", "order placed", "order successful", "purchase successful",
-                "transaction successful", "thank you", "congratulations", "redeem code"
-            ]
-            is_successful_order = any(ind in body_content.lower() for ind in success_indicators) or (code_match is not None)
-
-            # If code was not found directly on post-checkout page, auto-fetch from Rooter profile/orders
-            if not code_match:
-                try:
-                    logger.info("[Rooter] Checking profile/orders to extract latest voucher code...")
-                    await page.goto("https://shop.rooter.gg/profile/orders", wait_until="domcontentloaded", timeout=15000)
-                    await page.wait_for_timeout(2500)
-
-                    # Click top order card to view coupon code
-                    order_card = page.locator("text='Google Play Recharge Code', text='PlayStation Gift Card', div[class*='order']").first
-                    if await order_card.is_visible(timeout=3000):
-                        await order_card.click()
-                        await page.wait_for_timeout(2000)
-
-                    orders_body = await page.locator("body").inner_text()
-                    code_match = re.search(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", orders_body, re.IGNORECASE)
-                    if not code_match and prod_info["type"] == "google_play":
-                        code_match = re.search(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", orders_body, re.IGNORECASE)
-                        if not code_match:
-                            code_match = re.search(r"\b([A-Z0-9]{16})\b", orders_body)
-
-                    if not pin_match:
-                        pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", orders_body, re.IGNORECASE)
-                    if not order_match:
-                        order_match = re.search(r"(?:Order\s*Id|Txn\s*ID|Reference)[\s:]*#?([A-Z0-9_-]+)", orders_body, re.IGNORECASE)
-
-                    if code_match or any(ind in orders_body.lower() for ind in success_indicators):
-                        is_successful_order = True
-                        shot_path = await browser_manager.capture_screenshot(page, f"order_{prod_info['type']}_{denomination}")
-                except Exception as oe:
-                    logger.warning(f"[Rooter] Could not auto-fetch from profile/orders: {oe}")
-
-            if not is_successful_order and not code_match:
+            # Check if out of stock
+            if "out of stock" in body_content.lower() and not is_order_page:
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=denomination,
                     quantity=quantity,
                     account_label=account_label,
-                    message="Order submitted, but order confirmation was not detected on page. Please verify your Rooter profile / Orders tab.",
+                    message=f"Rooter {prod_name} ₹{denomination:,} went out of stock right before payment completed.",
                     error_screenshot=shot_path,
                 )
 
-            code = code_match.group(1) if code_match else "Check Orders Tab in Rooter"
-            pin = pin_match.group(1) if pin_match else "N/A"
-            order_id = order_match.group(1) if order_match else f"RTR-{int(asyncio.get_event_loop().time())}"
+            # Extract REAL Master Order ID (e.g. MO_2104663773_3832078)
+            mo_match = re.search(r"\b(MO_\d+_\d+|ORD_[A-Za-z0-9_-]+)\b", current_url + " " + body_content)
+            real_order_id = mo_match.group(1) if mo_match else None
 
-            # Extract all voucher codes found if quantity > 1
-            active_body = orders_body if 'orders_body' in locals() else body_content
-            all_found_codes = re.findall(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", active_body, re.IGNORECASE)
-            codes_list = list(dict.fromkeys(all_found_codes)) if all_found_codes else ([code] if code else [])
+            # Extract REAL 12-char PlayStation voucher codes (XXXX-XXXX-XXXX)
+            code_matches = re.findall(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", body_content)
+            if not code_matches:
+                code_matches = re.findall(r"(?:Code|Voucher|Redeem Code)[\s:#]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
+
+            # Filter valid codes
+            valid_codes = [c for c in code_matches if len(re.sub(r'[^A-Z0-9]', '', c)) in (12, 16)]
+            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", body_content, re.IGNORECASE)
+            real_pin = pin_match.group(1) if pin_match else "N/A"
+
+            # STRICT VALIDATION: Order is ONLY successful if on real order page OR real MO_ order ID exists OR real voucher code extracted
+            if not is_order_page and not real_order_id and not valid_codes:
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
+                    message="Order was not confirmed by Rooter. No order ID or voucher was generated (item was not debited).",
+                    error_screenshot=shot_path,
+                )
+
+            # If redirected to order page but code is still loading in React, wait a moment to read it
+            if is_order_page and not valid_codes:
+                await page.wait_for_timeout(3000)
+                body_content = await page.locator("body").inner_text()
+                retry_matches = re.findall(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})\b", body_content)
+                valid_codes = [c for c in retry_matches if len(re.sub(r'[^A-Z0-9]', '', c)) in (12, 16)]
+
+            display_code = valid_codes[0] if valid_codes else (real_order_id or "Confirmed on Rooter")
+            final_order_id = real_order_id or "MO_CONFIRMED"
 
             return PurchaseResult(
                 success=True,
@@ -641,10 +613,10 @@ class RooterService(BasePlatform):
                 denomination=denomination,
                 quantity=quantity,
                 account_label=account_label,
-                voucher_code=code,
-                voucher_pin=pin,
-                codes=codes_list,
-                order_id=order_id,
+                voucher_code=display_code,
+                voucher_pin=real_pin,
+                codes=valid_codes if valid_codes else [display_code],
+                order_id=final_order_id,
                 receipt_summary=f"Rooter {prod_name} ₹{denomination:,} x{quantity}",
                 message=f"{prod_name} (x{quantity}) successfully purchased on Rooter with wallet balance!",
                 error_screenshot=shot_path,

@@ -655,8 +655,13 @@ async def run_sniper_loop(
                         any_success = True
                         sim_badge = " [SIMULATED TEST]" if result.simulation else ""
                         total_paid = d_val * q_val
-                        account_manager.deduct_balance(acc_data.get("id"), total_paid)
-                        rem_bal = acc_data.get("wallet_balance", 0.0)
+                        # Fetch real-time live balance directly from Rooter API
+                        try:
+                            live_bal = await account_manager.refresh_account_balance(acc_data.get("id"))
+                            rem_bal = live_bal if live_bal is not None else float(acc_data.get("wallet_balance", 0.0))
+                        except Exception:
+                            account_manager.deduct_balance(acc_data.get("id"), total_paid)
+                            rem_bal = float(acc_data.get("wallet_balance", 0.0))
 
                         codes_display = ""
                         if result.codes and len(result.codes) > 1:
