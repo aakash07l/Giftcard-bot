@@ -269,23 +269,9 @@ class RooterService(BasePlatform):
             # Auto-dismiss region popup if present
             await self.dismiss_location_popup(page)
 
-            # A. Google Play Recharge Code (₹10 Test Buy)
-            if prod_info["type"] == "google_play":
-                try:
-                    btn = await page.wait_for_selector(
-                        "button:has-text('Pay via wallet'), button:has-text('Pay'), button:has-text('Buy Now'), button:has-text('Out of Stock')",
-                        timeout=12000
-                    )
-                    if btn:
-                        txt = await btn.inner_text()
-                        if "out of stock" in txt.lower():
-                            logger.info("[Rooter] Google Play is Out of Stock.")
-                            return False
-                        logger.info(f"🚨 [Rooter] IN STOCK: Google Play ₹{denomination} is active ({txt.strip()})!")
-                        return True
-                except Exception as be:
-                    logger.warning(f"Could not find Google Play action button: {be}")
-                    return False
+            # A. Google Play Recharge Code (Permanently Disabled)
+            if prod_info["type"] == "google_play" or denomination < 1000:
+                logger.info("[Rooter] Google Play checking is permanently disabled.")
                 return False
 
             # B. PlayStation Gift Cards (₹1,000 to ₹5,000)

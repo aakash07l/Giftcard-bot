@@ -4,6 +4,8 @@ Manages 5-10 Rooter accounts, their JWT Bearer tokens, wallet balances, and acti
 Persists data to sessions/accounts.json.
 """
 
+import os
+import re
 import json
 import logging
 import base64
@@ -20,18 +22,26 @@ logger = logging.getLogger(__name__)
 ACCOUNTS_FILE = config.SESSION_DIR / "accounts.json"
 ROOTER_WALLET_BALANCE_URL = "https://payments.rooter.io/wallet/balance"
 
-def extract_user_id(token: str) -> int:
-    """Extracts Rooter userId from JWT Bearer token payload."""
+def extract_user_id(token: str) -> str:
+    """Extracts Rooter userId from JWT Bearer token payload (handles numeric or alphanumeric userIds)."""
     try:
         parts = token.split(".")
         if len(parts) >= 2:
             padding = "=" * (-len(parts[1]) % 4)
-            payload_str = base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8")
-            data = json.loads(payload_str)
-            return int(data.get("userId", 0))
+            payload_str = base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8", errors="ignore")
+            try:
+                data = json.loads(payload_str)
+                uid = data.get("userId", "")
+                if uid:
+                    return str(uid)
+            except Exception:
+                pass
+            match = re.search(r'"userId"\s*:\s*"?([a-zA-Z0-9_-]+)', payload_str)
+            if match:
+                return match.group(1)
     except Exception:
         pass
-    return 0
+    return ""
 
 async def fetch_live_balance_for_token(token: str) -> Optional[float]:
     """Fetches real-time live wallet balance directly from Rooter payments API using Bearer token."""
@@ -73,7 +83,7 @@ class AccountManager:
         self._load()
 
     def _load(self):
-        """Loads accounts from JSON file or auto-seeds from config."""
+        """Loads accounts from JSON file or auto-seeds from ENV variables / config."""
         if self.filepath.exists():
             try:
                 with open(self.filepath, "r", encoding="utf-8") as f:
@@ -83,20 +93,91 @@ class AccountManager:
                 logger.warning(f"Failed to read {self.filepath}: {e}")
                 self.accounts = []
 
-        # Auto-seed initial account from config if accounts list is empty
+        # 1. Parse ROOTER_ACCOUNTS_JSON from environment if provided
+        raw_json = os.getenv("ROOTER_ACCOUNTS_JSON", "").strip() or getattr(config, "ROOTER_ACCOUNTS_JSON", "").strip()
+        if raw_json:
+            try:
+                parsed = json.loads(raw_json)
+                items = parsed if isinstance(parsed, list) else parsed.get("accounts", [])
+                for item in items:
+                    tok = item.get("token", "").strip()
+                    if tok and len(tok) > 10:
+                        lbl = item.get("label")
+                        bal = float(item.get("wallet_balance", item.get("balance", 0.0)))
+                        self._merge_or_add_token(tok, label=lbl, wallet_balance=bal)
+            except Exception as e:
+                logger.warning(f"Failed to parse ROOTER_ACCOUNTS_JSON: {e}")
+
+        # 2. Parse ROOTER_TOKENS from environment if provided (comma, newline, or semicolon separated)
+        raw_tokens = os.getenv("ROOTER_TOKENS", "").strip() or getattr(config, "ROOTER_TOKENS", "").strip()
+        if raw_tokens:
+            delim_tokens = [t.strip() for t in re.split(r"[,;\n\r]+", raw_tokens) if len(t.strip()) > 10]
+            for idx, tok in enumerate(delim_tokens, 1):
+                self._merge_or_add_token(tok, label=f"Account {idx}")
+
+        # 3. Auto-seed initial account from config.ROOTER_AUTH_TOKEN if accounts list is still empty
         if not self.accounts and config.ROOTER_AUTH_TOKEN and len(config.ROOTER_AUTH_TOKEN) > 10:
             uid = extract_user_id(config.ROOTER_AUTH_TOKEN)
             default_acc = {
                 "id": "acc_1",
                 "label": "Account 1 (Primary)",
                 "token": config.ROOTER_AUTH_TOKEN,
-                "user_id": uid or 2104663773,
+                "user_id": uid or "2104663773",
                 "wallet_balance": 1084.0,
                 "is_active": True,
                 "created_at": datetime.now().isoformat(),
             }
             self.accounts.append(default_acc)
-            self._save()
+
+        self._save()
+
+    def _merge_or_add_token(
+        self,
+        token: str,
+        label: Optional[str] = None,
+        wallet_balance: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Merges with existing account by token or userId, or appends a new account."""
+        clean_token = token.strip()
+        if clean_token.lower().startswith("bearer "):
+            clean_token = clean_token[7:].strip()
+
+        uid = extract_user_id(clean_token)
+
+        for acc in self.accounts:
+            if acc.get("token") == clean_token or (uid and str(acc.get("user_id")) == str(uid)):
+                acc["token"] = clean_token
+                if uid and not acc.get("user_id"):
+                    acc["user_id"] = uid
+                if label and not acc.get("label"):
+                    acc["label"] = label
+                if wallet_balance > 0 and float(acc.get("wallet_balance", 0.0)) <= 0:
+                    acc["wallet_balance"] = wallet_balance
+                return acc
+
+        existing_indices = []
+        for a in self.accounts:
+            aid = a.get("id", "")
+            if aid.startswith("acc_"):
+                try:
+                    existing_indices.append(int(aid[4:]))
+                except ValueError:
+                    pass
+        next_idx = max(existing_indices, default=0) + 1
+        new_id = f"acc_{next_idx}"
+        new_label = label or f"Account {next_idx}"
+
+        new_acc = {
+            "id": new_id,
+            "label": new_label,
+            "token": clean_token,
+            "user_id": uid,
+            "wallet_balance": float(wallet_balance),
+            "is_active": True,
+            "created_at": datetime.now().isoformat(),
+        }
+        self.accounts.append(new_acc)
+        return new_acc
 
     def _save(self):
         """Saves current accounts to JSON file atomically."""
@@ -117,8 +198,9 @@ class AccountManager:
 
     def get_account(self, acc_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single account by ID or UserID."""
+        acc_id_str = str(acc_id).strip()
         for acc in self.accounts:
-            if acc.get("id") == acc_id or str(acc.get("user_id")) == str(acc_id):
+            if str(acc.get("id")) == acc_id_str or str(acc.get("user_id")) == acc_id_str:
                 return acc
         return None
 
@@ -128,58 +210,17 @@ class AccountManager:
         label: Optional[str] = None,
         wallet_balance: float = 0.0,
     ) -> Dict[str, Any]:
-        """Adds a new Rooter account. Replaces if same userId already exists."""
-        clean_token = token.strip()
-        if clean_token.lower().startswith("bearer "):
-            clean_token = clean_token[7:].strip()
-
-        uid = extract_user_id(clean_token)
-
-        # Check if already exists by token or userId
-        for acc in self.accounts:
-            if acc.get("token") == clean_token or (uid and acc.get("user_id") == uid):
-                acc["token"] = clean_token
-                if label:
-                    acc["label"] = label
-                if wallet_balance > 0:
-                    acc["wallet_balance"] = wallet_balance
-                acc["is_active"] = True
-                self._save()
-                logger.info(f"Updated existing account {acc['id']} (UID: {uid})")
-                return acc
-
-        # Determine next ID
-        existing_indices = []
-        for a in self.accounts:
-            aid = a.get("id", "")
-            if aid.startswith("acc_"):
-                try:
-                    existing_indices.append(int(aid[4:]))
-                except ValueError:
-                    pass
-        next_idx = max(existing_indices, default=0) + 1
-        new_id = f"acc_{next_idx}"
-
-        new_label = label or f"Account {next_idx}"
-        new_acc = {
-            "id": new_id,
-            "label": new_label,
-            "token": clean_token,
-            "user_id": uid,
-            "wallet_balance": float(wallet_balance),
-            "is_active": True,
-            "created_at": datetime.now().isoformat(),
-        }
-
-        self.accounts.append(new_acc)
+        """Adds or updates a Rooter account."""
+        acc = self._merge_or_add_token(token=token, label=label, wallet_balance=wallet_balance)
         self._save()
-        logger.info(f"Added new account {new_id} ({new_label}, UID: {uid}, Balance: ₹{wallet_balance})")
-        return new_acc
+        logger.info(f"Registered account: {acc['id']} ({acc.get('label')}, UID: {acc.get('user_id')}, Balance: ₹{acc.get('wallet_balance')})")
+        return acc
 
     def remove_account(self, acc_id: str) -> bool:
         """Removes an account by ID."""
+        acc_id_str = str(acc_id).strip()
         initial_len = len(self.accounts)
-        self.accounts = [a for a in self.accounts if a.get("id") != acc_id and str(a.get("user_id")) != str(acc_id)]
+        self.accounts = [a for a in self.accounts if str(a.get("id")) != acc_id_str and str(a.get("user_id")) != acc_id_str]
         if len(self.accounts) < initial_len:
             self._save()
             logger.info(f"Removed account {acc_id}")

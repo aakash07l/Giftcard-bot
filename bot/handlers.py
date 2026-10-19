@@ -49,8 +49,55 @@ PLATFORM_SERVICES: Dict[str, BasePlatform] = {
 # Temporary memory store for pending interactive logins
 LOGIN_SESSIONS: Dict[int, Dict[str, Any]] = {}
 
-# Active background auto-sniper jobs {user_id: {"task": Task, "stop_event": Event, ...}}
+# Global Singleton for 24/7 Restock Sniper (Shared across all Telegram users)
+GLOBAL_SNIPER: Dict[str, Any] = {
+    "is_running": False,
+    "task": None,
+    "stop_event": None,
+    "platform": "rooter",
+    "denomination": 0,
+    "attempts": 0,
+    "chat_ids": set(),         # Set of Telegram chat IDs to receive broadcast alerts
+    "started_by_user_id": 0,
+    "started_by_name": "",
+}
+
+# Compatibility dictionary for legacy references
 ACTIVE_SNIPERS: Dict[int, Dict[str, Any]] = {}
+
+async def broadcast_sniper_message(
+    bot,
+    text: str,
+    parse_mode=ParseMode.HTML,
+    reply_markup=None,
+    photo_path: Optional[str] = None,
+):
+    """Broadcasts a sniper notification simultaneously to all subscribed chat IDs."""
+    chat_ids = list(GLOBAL_SNIPER.get("chat_ids", set()))
+    if not chat_ids:
+        return
+
+    async def _send_to_one(cid):
+        try:
+            if photo_path and os.path.exists(photo_path):
+                with open(photo_path, "rb") as photo:
+                    await bot.send_photo(
+                        chat_id=cid,
+                        photo=photo,
+                        caption=text[:1024],
+                        parse_mode=parse_mode,
+                    )
+            else:
+                await bot.send_message(
+                    chat_id=cid,
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to dispatch sniper broadcast to chat {cid}: {e}")
+
+    await asyncio.gather(*[_send_to_one(cid) for cid in chat_ids], return_exceptions=True)
 
 def format_status_text(user_id: int) -> str:
     """Formats current bot status for Rooter PlayStation sniper in HTML."""
@@ -69,12 +116,14 @@ def format_status_text(user_id: int) -> str:
 
     mode_text = "🧪 Simulation (Dry Run - Safe)" if config.SIMULATION_MODE else "⚡ Live Purchasing"
 
-    sniper_info = ACTIVE_SNIPERS.get(user_id)
-    if sniper_info:
-        denom_disp = sniper_info["denomination"]
-        checks = sniper_info.get("attempts", 0)
+    is_running = GLOBAL_SNIPER.get("is_running") and GLOBAL_SNIPER.get("task") and not GLOBAL_SNIPER["task"].done()
+    if is_running:
+        denom_disp = GLOBAL_SNIPER.get("denomination", 0)
+        checks = GLOBAL_SNIPER.get("attempts", 0)
+        sub_count = len(GLOBAL_SNIPER.get("chat_ids", set()))
         p_label = "Any PSN (₹1k-₹5k)" if denom_disp == 0 else f"PSN ₹{denom_disp:,}"
-        sniper_text = f"🟢 Active ({p_label} - <code>{checks}</code> checks)"
+        sub_badge = f" | 👥 {sub_count} user{'s' if sub_count > 1 else ''}" if sub_count > 1 else ""
+        sniper_text = f"🟢 Active ({p_label} - <code>{checks}</code> checks{sub_badge})"
     else:
         sniper_text = "⚪ Inactive"
 
@@ -96,6 +145,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id if user else 0
     first_name = html.escape(user.first_name if user and user.first_name else "Gamer")
+
+    # Auto-subscribe this chat to alerts
+    if update.effective_chat:
+        GLOBAL_SNIPER["chat_ids"].add(update.effective_chat.id)
 
     try:
         await account_manager.sync_all_balances()
@@ -467,21 +520,28 @@ async def run_sniper_loop(
         else:
             start_desc = f"{prod_name} ₹{denomination:,}"
 
-        # Send immediate live confirmation to Telegram chat
+        # Register global sniper state
+        GLOBAL_SNIPER["is_running"] = True
+        GLOBAL_SNIPER["platform"] = platform
+        GLOBAL_SNIPER["denomination"] = denomination
+        GLOBAL_SNIPER["stop_event"] = stop_event
+        GLOBAL_SNIPER["chat_ids"].add(chat_id)
+
+        # Send immediate live confirmation to Telegram chats
         try:
-            await bot.send_message(
-                chat_id=chat_id,
+            await broadcast_sniper_message(
+                bot,
                 text=(
                     f"🔍 <b>Sniper Active:</b> Opening Rooter Shop to inspect <b>{start_desc}</b>...\n"
                     f"⚡ <i>Available hote hi 1 second me instant auto-buy karega!</i>"
                 ),
-                parse_mode=ParseMode.HTML,
             )
         except Exception as me:
             logger.warning(f"Could not send sniper start message: {me}")
 
         while not stop_event.is_set():
             attempts += 1
+            GLOBAL_SNIPER["attempts"] = attempts
             if user_id in ACTIVE_SNIPERS:
                 ACTIVE_SNIPERS[user_id]["attempts"] = attempts
 
@@ -506,10 +566,9 @@ async def run_sniper_loop(
                 logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
                 if attempts == 1:
                     try:
-                        await bot.send_message(
-                            chat_id=chat_id,
+                        await broadcast_sniper_message(
+                            bot,
                             text=f"⚠️ Rooter page notice: <code>{html.escape(str(e)[:100])}</code>. Continuing check...",
-                            parse_mode=ParseMode.HTML,
                         )
                     except Exception:
                         pass
@@ -517,13 +576,12 @@ async def run_sniper_loop(
             if attempts == 1 and not is_in_stock:
                 status_desc = "PlayStation Gift Cards (₹1,000, ₹2,000, ₹3,000, ₹5,000)" if is_any_mode else f"{prod_name} ₹{denomination:,}"
                 try:
-                    await bot.send_message(
-                        chat_id=chat_id,
+                    await broadcast_sniper_message(
+                        bot,
                         text=(
                             f"ℹ️ <b>Stock Status:</b> {status_desc} abhi Rooter par <b>Out of Stock</b> hai.\n"
                             f"🔄 <i>Monitoring actively every {config.SNIPE_INTERVAL_SECONDS}s. Jaise hi restock hoga, turant buy kar lega!</i>"
                         ),
-                        parse_mode=ParseMode.HTML,
                     )
                 except Exception:
                     pass
@@ -567,10 +625,9 @@ async def run_sniper_loop(
                         min_avail = min(available_denominations) if available_denominations else 1000
                         logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < lowest in-stock card ₹{min_avail:,}")
                         asyncio.create_task(
-                            bot.send_message(
-                                chat_id=chat_id,
+                            broadcast_sniper_message(
+                                bot,
                                 text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{min_avail:,}.",
-                                parse_mode=ParseMode.HTML,
                             )
                         )
 
@@ -578,11 +635,11 @@ async def run_sniper_loop(
                     logger.warning("[Sniper] Stock detected but no active accounts have sufficient balance.")
                     continue
 
-                # Notify Telegram user asynchronously in background so checkout is NOT delayed by even 1ms
+                # Notify all Telegram users simultaneously in background so checkout is NOT delayed by even 1ms
                 acc_summary = ", ".join([f"{a.get('label', a['id'])} (₹{d:,} x{q})" for a, d, q in order_tasks])
                 asyncio.create_task(
-                    bot.send_message(
-                        chat_id=chat_id,
+                    broadcast_sniper_message(
+                        bot,
                         text=(
                             f"🚨 <b>STOCK DETECTED!</b>\n\n"
                             f"🎯 <b>Platform:</b> {plat_name}\n"
@@ -591,7 +648,6 @@ async def run_sniper_loop(
                             f"<i>{html.escape(acc_summary)}</i>\n\n"
                             f"⚡ <b>All accounts firing simultaneously with Rooter Wallet...</b>"
                         ),
-                        parse_mode=ParseMode.HTML,
                     )
                 )
 
@@ -688,41 +744,29 @@ async def run_sniper_loop(
                             f"{redeem_tip}"
                         )
                         try:
-                            await bot.send_message(
-                                chat_id=chat_id,
+                            shot_file = result.error_screenshot
+                            await broadcast_sniper_message(
+                                bot,
                                 text=success_text,
-                                parse_mode=ParseMode.HTML,
                                 reply_markup=get_main_menu_keyboard(),
+                                photo_path=shot_file if (shot_file and os.path.exists(shot_file)) else None,
                             )
                         except Exception as me:
-                            logger.warning(f"Error sending success message: {me}")
-
-                        shot_file = result.error_screenshot
-                        if shot_file and os.path.exists(shot_file):
-                            try:
-                                with open(shot_file, "rb") as photo:
-                                    await bot.send_photo(
-                                        chat_id=chat_id,
-                                        photo=photo,
-                                        caption=f"📸 Order proof for {acc_lbl}",
-                                    )
-                            except Exception:
-                                pass
+                            logger.warning(f"Error broadcasting success message: {me}")
                     else:
                         logger.warning(f"[Sniper] Purchase failed for {acc_lbl}: {result.message}")
                         failure_messages.append(f"{acc_lbl}: {result.message}")
                         try:
-                            await bot.send_message(
-                                chat_id=chat_id,
+                            await broadcast_sniper_message(
+                                bot,
                                 text=(
                                     f"⚠️ <b>Sniper Alert ({acc_lbl}):</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
                                     f"<code>{html.escape(result.message)}</code>"
                                 ),
-                                parse_mode=ParseMode.HTML,
                                 reply_markup=get_stop_snipe_keyboard(),
                             )
                         except Exception as me:
-                            logger.warning(f"Error sending account alert: {me}")
+                            logger.warning(f"Error broadcasting account alert: {me}")
 
                 if any_success:
                     logger.info("[Sniper] Purchase completed successfully for account(s). Finishing sniper run.")
@@ -731,24 +775,23 @@ async def run_sniper_loop(
                     last_msg = failure_messages[0] if failure_messages else "Checkout could not be confirmed."
                     logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {last_msg}")
                     try:
-                        await bot.send_message(
-                            chat_id=chat_id,
+                        await broadcast_sniper_message(
+                            bot,
                             text=(
                                 f"⚠️ <b>Sniper Alert:</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
                                 f"<code>{html.escape(last_msg)}</code>\n\n"
                                 f"<i>Monitoring will continue in the next cycle...</i>"
                             ),
-                            parse_mode=ParseMode.HTML,
                             reply_markup=get_stop_snipe_keyboard(),
                         )
                     except Exception as me:
-                        logger.warning(f"Error sending final sniper alert: {me}")
+                        logger.warning(f"Error broadcasting final sniper alert: {me}")
 
             # Heartbeat message (Disabled by default to avoid chat spam and save credit)
             if config.ENABLE_SNIPER_HEARTBEAT and attempts % 20 == 0:
                 try:
-                    await bot.send_message(
-                        chat_id=chat_id,
+                    await broadcast_sniper_message(
+                        bot,
                         text=(
                             f"🔄 <b>Auto-Sniper Running (24/7 Restock Monitor)</b>\n"
                             f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -758,7 +801,6 @@ async def run_sniper_loop(
                             f"• <b>Status:</b> Actively checking every {config.SNIPE_INTERVAL_SECONDS}s. Ready to buy instantly when stock arrives!\n"
                             f"━━━━━━━━━━━━━━━━━━━━━━"
                         ),
-                        parse_mode=ParseMode.HTML,
                         reply_markup=get_stop_snipe_keyboard(),
                     )
                 except Exception:
@@ -782,14 +824,13 @@ async def run_sniper_loop(
                 pass
 
     except asyncio.CancelledError:
-        logger.info(f"Sniper task for user {user_id} was cancelled.")
+        logger.info(f"Sniper task was cancelled.")
     except Exception as e:
-        logger.error(f"Error in sniper loop for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Error in sniper loop: {e}", exc_info=True)
         try:
-            await bot.send_message(
-                chat_id=chat_id,
+            await broadcast_sniper_message(
+                bot,
                 text=f"❌ <b>Auto-Sniper Error:</b> <code>{html.escape(str(e))}</code>\nMonitoring stopped.",
-                parse_mode=ParseMode.HTML,
                 reply_markup=get_main_menu_keyboard(),
             )
         except Exception:
@@ -805,12 +846,15 @@ async def run_sniper_loop(
                 await browser_context.close()
             except Exception:
                 pass
-        ACTIVE_SNIPERS.pop(user_id, None)
-        logger.info(f"Sniper loop closed for user {user_id}")
+        GLOBAL_SNIPER["is_running"] = False
+        GLOBAL_SNIPER["task"] = None
+        ACTIVE_SNIPERS.clear()
+        logger.info(f"Sniper loop closed.")
 
 async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, platform: str, denomination: int):
     """Common launcher for auto-sniper background monitoring."""
-    user_id = update.effective_user.id if update.effective_user else 0
+    user = update.effective_user
+    user_id = user.id if user else 0
     chat_id = update.effective_chat.id
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
 
@@ -842,13 +886,40 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
             await update.message.reply_text(text=warn_text, parse_mode=ParseMode.HTML, reply_markup=get_playstore_stopped_keyboard())
         return ConversationHandler.END
 
-    # Cancel any previous running sniper
-    if user_id in ACTIVE_SNIPERS:
-        old_sniper = ACTIVE_SNIPERS.pop(user_id)
-        if old_sniper.get("stop_event"):
-            old_sniper["stop_event"].set()
-        if old_sniper.get("task") and not old_sniper["task"].done():
-            old_sniper["task"].cancel()
+    # Always register caller's chat_id in global sniper notification list
+    GLOBAL_SNIPER["chat_ids"].add(chat_id)
+
+    # Check if Global Sniper is already active
+    is_currently_running = GLOBAL_SNIPER.get("is_running") and GLOBAL_SNIPER.get("task") and not GLOBAL_SNIPER["task"].done()
+
+    if is_currently_running and GLOBAL_SNIPER.get("denomination") == denomination:
+        checks = GLOBAL_SNIPER.get("attempts", 0)
+        target_name = "⚡ Any PlayStation Card (₹1,000 to ₹5,000)" if denomination == 0 else f"PlayStation ₹{denomination:,}"
+        already_msg = (
+            f"✅ <b>Auto-Sniper Already Active & Running!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Target:</b> {target_name}\n"
+            f"• <b>Total Checks:</b> <code>{checks}</code>\n"
+            f"• <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_SECONDS}s\n"
+            f"• <b>Subscribed Chats:</b> <code>{len(GLOBAL_SNIPER['chat_ids'])}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 <b>Aapka Telegram chat alert list me include ho gaya hai!</b>\n"
+            f"Jaise hi stock detect hoga aur buy hoga, confirmation aur codes aap dono ko simultaneously aayenge.\n\n"
+            f"<i>Stop karne ke liye <code>/stop</code> dabayein.</i>"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text=already_msg, parse_mode=ParseMode.HTML, reply_markup=get_stop_snipe_keyboard())
+        else:
+            await update.message.reply_text(text=already_msg, parse_mode=ParseMode.HTML, reply_markup=get_stop_snipe_keyboard())
+        return ConversationHandler.END
+
+    # If already running with a different denomination, stop previous task cleanly before restarting
+    if is_currently_running:
+        if GLOBAL_SNIPER.get("stop_event"):
+            GLOBAL_SNIPER["stop_event"].set()
+        if GLOBAL_SNIPER.get("task") and not GLOBAL_SNIPER["task"].done():
+            GLOBAL_SNIPER["task"].cancel()
+        logger.info(f"Switching global sniper target from ₹{GLOBAL_SNIPER.get('denomination')} to ₹{denomination}")
 
     stop_event = asyncio.Event()
 
@@ -863,14 +934,15 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
         )
     )
 
-    ACTIVE_SNIPERS[user_id] = {
-        "task": task,
-        "stop_event": stop_event,
-        "platform": platform,
-        "denomination": denomination,
-        "chat_id": chat_id,
-        "attempts": 0,
-    }
+    GLOBAL_SNIPER["task"] = task
+    GLOBAL_SNIPER["stop_event"] = stop_event
+    GLOBAL_SNIPER["platform"] = platform
+    GLOBAL_SNIPER["denomination"] = denomination
+    GLOBAL_SNIPER["is_running"] = True
+    GLOBAL_SNIPER["started_by_user_id"] = user_id
+    GLOBAL_SNIPER["started_by_name"] = user.first_name if user and user.first_name else "User"
+
+    ACTIVE_SNIPERS[user_id] = GLOBAL_SNIPER
 
     mode_text = "🧪 Simulation (Dry Run)" if config.SIMULATION_MODE else "⚡ Live Purchasing (Real Checkout)"
     if denomination == 0:
@@ -912,6 +984,10 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id if update.effective_user else 0
     query = update.callback_query
 
+    # Register chat_id
+    if update.effective_chat:
+        GLOBAL_SNIPER["chat_ids"].add(update.effective_chat.id)
+
     # Check if arguments provided in slash command, e.g. /snipe any, /snipe 1000, /snipe 2000
     if context.args and len(context.args) > 0:
         raw_arg = context.args[0].lower().strip().replace("k", "000").replace("₹", "").replace("rs", "").replace(".", "")
@@ -924,15 +1000,6 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             if val < 1000:
                 return await stop_playstore_handler(update, context)
             return await launch_sniper(update, context, "rooter", val)
-
-    # If a sniper is already running for this user, cancel it to allow starting fresh
-    if user_id in ACTIVE_SNIPERS:
-        old_sniper = ACTIVE_SNIPERS.pop(user_id)
-        if old_sniper.get("stop_event"):
-            old_sniper["stop_event"].set()
-        if old_sniper.get("task") and not old_sniper["task"].done():
-            old_sniper["task"].cancel()
-        logger.info(f"Previous sniper task cancelled for user {user_id} to start fresh sniper.")
 
     context.user_data["snipe_platform"] = "rooter"
     has_session = browser_manager.has_session(user_id, "rooter")
@@ -982,50 +1049,75 @@ async def snipe_denomination_selected(update: Update, context: ContextTypes.DEFA
     return await launch_sniper(update, context, platform, denomination)
 
 async def stop_snipe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stops the active auto-sniper background process."""
-    user_id = update.effective_user.id if update.effective_user else 0
+    """Stops the active auto-sniper background process for all subscribed users."""
+    user = update.effective_user
+    user_name = html.escape(user.first_name if user and user.first_name else "User")
     query = update.callback_query
 
-    if user_id in ACTIVE_SNIPERS:
-        sniper_data = ACTIVE_SNIPERS.pop(user_id)
-        stop_event = sniper_data.get("stop_event")
+    is_running = GLOBAL_SNIPER.get("is_running") and GLOBAL_SNIPER.get("task") and not GLOBAL_SNIPER["task"].done()
+
+    if is_running:
+        stop_event = GLOBAL_SNIPER.get("stop_event")
         if stop_event:
             stop_event.set()
-        task = sniper_data.get("task")
+        task = GLOBAL_SNIPER.get("task")
         if task and not task.done():
             task.cancel()
 
-        p_name = config.PLATFORMS.get(sniper_data["platform"], {}).get("name", sniper_data["platform"].title())
+        p_name = config.PLATFORMS.get(GLOBAL_SNIPER.get("platform", "rooter"), {}).get("name", "Rooter Shop")
+        d_val = GLOBAL_SNIPER.get("denomination", 0)
+        target_name = "Any PlayStation (₹1k-₹5k)" if d_val == 0 else f"PlayStation ₹{d_val:,}"
+        checks = GLOBAL_SNIPER.get("attempts", 0)
+
+        GLOBAL_SNIPER["is_running"] = False
+        GLOBAL_SNIPER["task"] = None
+        ACTIVE_SNIPERS.clear()
+
         msg = (
             f"🛑 <b>Auto-Sniper Stopped!</b>\n\n"
-            f"• Platform: {p_name}\n"
-            f"• Target: PlayStation ₹{sniper_data['denomination']:,}\n"
-            f"• Total Page Checks: <code>{sniper_data.get('attempts', 0)}</code>\n\n"
+            f"• <b>Stopped By:</b> {user_name}\n"
+            f"• <b>Platform:</b> {p_name}\n"
+            f"• <b>Target:</b> {target_name}\n"
+            f"• <b>Total Page Checks:</b> <code>{checks}</code>\n\n"
             f"Stock monitoring paused. You can restart anytime with /snipe or /start."
         )
+        if query:
+            await query.answer("Auto-Sniper stopped.")
+        await broadcast_sniper_message(context.bot, text=msg, reply_markup=get_main_menu_keyboard())
     else:
         msg = "ℹ️ <b>No active auto-sniper is currently running.</b>\nStart one with /snipe."
-
-    if query:
-        await query.answer("Auto-Sniper stopped.")
-        await query.edit_message_text(
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard(),
-        )
-    else:
-        await update.message.reply_text(
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard(),
-        )
+        if query:
+            await query.answer("No active sniper.")
+            await query.edit_message_text(
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
+        else:
+            await update.message.reply_text(
+                text=msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
 
 async def stop_playstore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stops Google Play / Play Store buying and locks the bot into PlayStation Only mode."""
-    user_id = update.effective_user.id if update.effective_user else 0
+    user = update.effective_user
+    user_name = html.escape(user.first_name if user and user.first_name else "User")
     query = update.callback_query
 
-    was_running = False
+    was_running = GLOBAL_SNIPER.get("is_running") and GLOBAL_SNIPER.get("task") and not GLOBAL_SNIPER["task"].done()
+
+    if was_running:
+        stop_event = GLOBAL_SNIPER.get("stop_event")
+        if stop_event:
+            stop_event.set()
+        task = GLOBAL_SNIPER.get("task")
+        if task and not task.done():
+            task.cancel()
+        GLOBAL_SNIPER["is_running"] = False
+        GLOBAL_SNIPER["task"] = None
+        ACTIVE_SNIPERS.clear()
     was_playstore = False
     target_name = "None"
 
@@ -1240,16 +1332,43 @@ async def handle_otp_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives raw Bearer token or JSON cookies and imports them."""
-    user_id = update.effective_user.id
-    cookie_text = update.message.text.strip()
+    """Receives raw Bearer token or JSON cookies, saves session, and auto-registers into AccountManager."""
+    user = update.effective_user
+    user_id = user.id if user else 0
+    raw_text = update.message.text.strip()
     platform = "rooter"
 
-    success = browser_manager.import_session_json(user_id, platform, cookie_text)
-    if success:
+    clean_tok = raw_text
+    if clean_tok.lower().startswith("bearer "):
+        clean_tok = clean_tok[7:].strip()
+
+    success = browser_manager.import_session_json(user_id, platform, clean_tok)
+
+    added_acc = None
+    if clean_tok.startswith("eyJ"):
+        try:
+            uname = user.first_name if user and user.first_name else f"Telegram {user_id}"
+            added_acc = await account_manager.add_account_async(
+                token=clean_tok,
+                label=f"Account ({uname})",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to auto-register imported token into AccountManager: {e}")
+
+    if success or added_acc:
+        acc_info = ""
+        if added_acc:
+            acc_info = (
+                f"\n\n👥 <b>Multi-Account Manager Synchronized:</b>\n"
+                f"• <b>Label:</b> {html.escape(added_acc.get('label', ''))}\n"
+                f"• <b>Account ID:</b> <code>{added_acc.get('id')}</code>\n"
+                f"• <b>User ID:</b> <code>{added_acc.get('user_id')}</code>\n"
+                f"• <b>Live Wallet Balance:</b> <b>₹{added_acc.get('wallet_balance'):,.2f}</b> [Rooter Live 🟢]\n"
+                f"• <b>Sniper Status:</b> 🟢 Ready for 24/7 Restock Parallel Buying!"
+            )
         await update.message.reply_text(
-            f"✅ <b>Authentication token successfully saved for {platform.title()}!</b>\n"
-            f"You can now trigger automated purchases with <code>/buy</code>.",
+            f"✅ <b>Authentication token successfully saved for {platform.title()}!</b>{acc_info}\n\n"
+            f"Restock sniper start karne ke liye <code>/snipe</code> dabayein ya <code>/accounts</code> se list check karein.",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
