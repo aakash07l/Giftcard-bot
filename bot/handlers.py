@@ -858,8 +858,9 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
     chat_id = update.effective_chat.id
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
 
-    # Pre-flight check: ensure active session exists
-    if not browser_manager.has_session(user_id, platform):
+    # Pre-flight check: ensure active session exists OR active accounts in account_manager exist
+    has_active_accs = bool(account_manager.get_active_accounts())
+    if not browser_manager.has_session(user_id, platform) and not has_active_accs:
         warn_text = (
             "⚠️ <b>Rooter Account Logged In Nahi Hai!</b>\n\n"
             "Cloud server restart hone ki wajah se session reset ho gaya hai ya Bearer token missing hai.\n\n"

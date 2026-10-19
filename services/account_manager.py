@@ -108,8 +108,13 @@ class AccountManager:
             except Exception as e:
                 logger.warning(f"Failed to parse ROOTER_ACCOUNTS_JSON: {e}")
 
-        # 2. Parse ROOTER_TOKENS from environment if provided (comma, newline, or semicolon separated)
-        raw_tokens = os.getenv("ROOTER_TOKENS", "").strip() or getattr(config, "ROOTER_TOKENS", "").strip()
+        # 2. Parse ROOTER_TOKENS or ROOTER_ACCOUNTS_TOKENS from environment (comma, newline, or semicolon separated)
+        raw_tokens = (
+            os.getenv("ROOTER_TOKENS", "").strip()
+            or os.getenv("ROOTER_ACCOUNTS_TOKENS", "").strip()
+            or getattr(config, "ROOTER_TOKENS", "").strip()
+            or getattr(config, "ROOTER_ACCOUNTS_TOKENS", "").strip()
+        )
         if raw_tokens:
             delim_tokens = [t.strip() for t in re.split(r"[,;\n\r]+", raw_tokens) if len(t.strip()) > 10]
             for idx, tok in enumerate(delim_tokens, 1):
