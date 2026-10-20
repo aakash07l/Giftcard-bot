@@ -201,6 +201,10 @@ class AccountManager:
         """Returns all active accounts."""
         return [acc for acc in self.accounts if acc.get("is_active", True)]
 
+    def get_active_accounts(self) -> List[Dict[str, Any]]:
+        """Alias for get_active() for cross-module compatibility."""
+        return self.get_active()
+
     def get_account(self, acc_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single account by ID or UserID."""
         acc_id_str = str(acc_id).strip()

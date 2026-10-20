@@ -4,6 +4,7 @@ Uses HTML ParseMode for ultra-stable, error-free formatting.
 Supports environment credentials (ROOTER_AUTH_TOKEN) and interactive flows.
 """
 
+import os
 import html
 import asyncio
 import logging
@@ -859,7 +860,7 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
     plat_name = config.PLATFORMS.get(platform, {}).get("name", platform.title())
 
     # Pre-flight check: ensure active session exists OR active accounts in account_manager exist
-    has_active_accs = bool(account_manager.get_active_accounts())
+    has_active_accs = bool(account_manager.get_active())
     if not browser_manager.has_session(user_id, platform) and not has_active_accs:
         warn_text = (
             "⚠️ <b>Rooter Account Logged In Nahi Hai!</b>\n\n"
