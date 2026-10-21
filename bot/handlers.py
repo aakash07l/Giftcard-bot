@@ -757,36 +757,25 @@ async def run_sniper_loop(
                     else:
                         logger.warning(f"[Sniper] Purchase failed for {acc_lbl}: {result.message}")
                         failure_messages.append(f"{acc_lbl}: {result.message}")
-                        try:
-                            await broadcast_sniper_message(
-                                bot,
-                                text=(
-                                    f"⚠️ <b>Sniper Alert ({acc_lbl}):</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
-                                    f"<code>{html.escape(result.message)}</code>"
-                                ),
-                                reply_markup=get_stop_snipe_keyboard(),
-                            )
-                        except Exception as me:
-                            logger.warning(f"Error broadcasting account alert: {me}")
 
                 if any_success:
                     logger.info("[Sniper] Purchase completed successfully for account(s). Finishing sniper run.")
                     break
                 else:
-                    last_msg = failure_messages[0] if failure_messages else "Checkout could not be confirmed."
-                    logger.warning(f"[Sniper #{attempts}] Purchase could not complete: {last_msg}")
+                    summary_fails = "\n".join([f"• <code>{html.escape(m)}</code>" for m in failure_messages])
+                    logger.warning(f"[Sniper #{attempts}] Purchase could not complete:\n{summary_fails}")
                     try:
                         await broadcast_sniper_message(
                             bot,
                             text=(
-                                f"⚠️ <b>Sniper Alert:</b> Stock appeared on {plat_name}, but checkout could not finish:\n"
-                                f"<code>{html.escape(last_msg)}</code>\n\n"
+                                f"⚠️ <b>Sniper Alert ({plat_name}):</b> Checkout could not complete:\n"
+                                f"{summary_fails}\n\n"
                                 f"<i>Monitoring will continue in the next cycle...</i>"
                             ),
                             reply_markup=get_stop_snipe_keyboard(),
                         )
                     except Exception as me:
-                        logger.warning(f"Error broadcasting final sniper alert: {me}")
+                        logger.warning(f"Error broadcasting sniper alert: {me}")
 
             # Heartbeat message (Disabled by default to avoid chat spam and save credit)
             if config.ENABLE_SNIPER_HEARTBEAT and attempts % 20 == 0:

@@ -170,17 +170,20 @@ class RooterService(BasePlatform):
 
         supported = [1000, 2000, 3000, 4000, 5000]
         for d in supported:
-            opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
+            opt_locator = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
+                has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)
+            ).first
             in_stock = False
 
             try:
                 if await opt_locator.count() > 0:
-                    parent_text = await opt_locator.first.locator("xpath=..").inner_text()
-                    in_stock = "out of stock" not in parent_text.lower()
+                    chip_txt = (await opt_locator.inner_text()).lower()
+                    in_stock = ("out of stock" not in chip_txt) and ("sold out" not in chip_txt)
                 else:
-                    simple_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
+                    simple_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)).first
                     if await simple_opt.count() > 0:
-                        in_stock = "out of stock" not in (await simple_opt.first.inner_text()).lower()
+                        txt = (await simple_opt.inner_text()).lower()
+                        in_stock = ("out of stock" not in txt) and ("sold out" not in txt)
             except Exception:
                 in_stock = False
 
@@ -224,7 +227,11 @@ class RooterService(BasePlatform):
             await self.dismiss_location_popup(page)
 
             try:
-                await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
+                await page.wait_for_selector("div[class*='chipWrapper'], div[class*='styles_chipRoot']", timeout=8000)
+                await page.wait_for_selector(
+                    "button:has-text('Out of Stock'), button:has-text('Proceed to Pay'), button:has-text('Pay via wallet'), button:has-text('Buy Now')",
+                    timeout=5000,
+                )
             except Exception:
                 pass
 
@@ -233,16 +240,45 @@ class RooterService(BasePlatform):
             # Highest to lowest priority: ₹5,000 down to ₹1,000
             supported = [5000, 4000, 3000, 2000, 1000]
             for d in supported:
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
+                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
+                    has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)
+                ).first
                 if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
+                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)).last
 
                 if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
-                    if "out of stock" not in card_text.lower():
-                        logger.info(f"🚨 [Rooter] In-stock candidate card found: ₹{d}!")
-                        in_stock_list.append(d)
+                    chip_text = (await denom_opt.inner_text()).lower()
+                    if "out of stock" in chip_text or "sold out" in chip_text:
+                        continue
+
+                    # Check parent container text as well
+                    try:
+                        parent_text = (await denom_opt.evaluate("e => e.parentElement ? e.parentElement.innerText : ''")).lower()
+                        if "out of stock" in parent_text:
+                            continue
+                    except Exception:
+                        pass
+
+                    # Click to select chip and verify the bottom action button confirms live stock!
+                    try:
+                        await denom_opt.click(force=True, timeout=1200)
+                        await page.wait_for_timeout(250)
+                    except Exception:
+                        pass
+
+                    bottom_btn = page.locator(
+                        "button[data-testid='proceed-to-pay'], button:has-text('Proceed to Pay'), "
+                        "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Pay ₹'), "
+                        "button:has-text('Out of Stock')"
+                    ).first
+                    if await bottom_btn.count() > 0:
+                        btn_text = (await bottom_btn.inner_text()).lower()
+                        is_disabled = await bottom_btn.is_disabled()
+                        if "out of stock" in btn_text or is_disabled:
+                            continue
+                        if any(kw in btn_text for kw in ["pay", "buy", "proceed", "redeem"]):
+                            logger.info(f"🚨 [Rooter] CONFIRMED IN STOCK: PlayStation ₹{d} (button: '{btn_text}')")
+                            in_stock_list.append(d)
         except Exception as e:
             logger.warning(f"Error checking in-stock denominations: {e}")
 
@@ -275,52 +311,60 @@ class RooterService(BasePlatform):
                 return False
 
             # B. PlayStation Gift Cards (₹1,000 to ₹5,000)
-            else:
+            try:
+                await page.wait_for_selector("div[class*='chipWrapper'], div[class*='styles_chipRoot']", timeout=8000)
+                await page.wait_for_selector(
+                    "button:has-text('Out of Stock'), button:has-text('Proceed to Pay'), button:has-text('Pay via wallet'), button:has-text('Buy Now')",
+                    timeout=5000,
+                )
+            except Exception:
+                pass
+
+            await self.dismiss_location_popup(page)
+
+            denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
+                has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)
+            ).first
+            if await denom_opt.count() == 0:
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).last
+
+            if await denom_opt.count() > 0:
+                chip_text = (await denom_opt.inner_text()).lower()
+                if "out of stock" in chip_text or "sold out" in chip_text:
+                    logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
+                    return False
+
                 try:
-                    await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
+                    parent_text = (await denom_opt.evaluate("e => e.parentElement ? e.parentElement.innerText : ''")).lower()
+                    if "out of stock" in parent_text:
+                        logger.debug(f"[Rooter] ₹{denomination} card parent wrapper is labeled Out of Stock.")
+                        return False
                 except Exception:
                     pass
 
-                await self.dismiss_location_popup(page)
+                # Click to select denomination with force=True
+                try:
+                    await denom_opt.click(force=True, timeout=1200)
+                    await page.wait_for_timeout(250)
+                except Exception:
+                    pass
 
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
-
-                if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
-
-                    # Check for out of stock indicator
-                    if "out of stock" in card_text.lower():
-                        logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
+                # Check bottom action button
+                bottom_btn = page.locator(
+                    "button[data-testid='proceed-to-pay'], button:has-text('Proceed to Pay'), "
+                    "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Pay ₹'), "
+                    "button:has-text('Out of Stock')"
+                ).first
+                if await bottom_btn.count() > 0:
+                    btn_text = (await bottom_btn.inner_text()).lower()
+                    is_disabled = await bottom_btn.is_disabled()
+                    if "out of stock" in btn_text or is_disabled:
                         return False
+                    if any(kw in btn_text for kw in ["pay", "buy", "proceed", "redeem"]):
+                        logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
+                        return True
 
-                    # Click to select denomination with force=True and short timeout
-                    try:
-                        await target_card.click(force=True, timeout=2000)
-                    except Exception:
-                        try:
-                            await target_card.dispatch_event("click")
-                        except Exception:
-                            pass
-                    await page.wait_for_timeout(300)
-
-                    # Check bottom action button
-                    try:
-                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=4000)
-                        if bottom_btn:
-                            btn_text = await bottom_btn.inner_text()
-                            if "out of stock" not in btn_text.lower():
-                                logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
-                                return True
-                    except Exception:
-                        pass
-
-                    return False
-
-                logger.warning(f"[Rooter] Could not locate option card for ₹{denomination}")
-                return False
+            return False
 
         except Exception as e:
             logger.warning(f"Error checking Rooter stock: {e}")
