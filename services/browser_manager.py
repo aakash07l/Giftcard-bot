@@ -6,6 +6,7 @@ Handles headless Chromium instances, session storage_state, anti-detect headers,
 import os
 import json
 import logging
+import re
 import urllib.parse
 import base64
 from datetime import datetime
@@ -16,6 +17,37 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 import config
 
 logger = logging.getLogger(__name__)
+
+def extract_jwt_token(val: Any) -> Optional[str]:
+    """Safely extracts a valid JWT access token from raw strings, JSON dicts, or URL-encoded cookies."""
+    if not val or not isinstance(val, str):
+        return None
+    val = val.strip()
+    if val.lower().startswith("bearer "):
+        val = val[7:].strip()
+    # Check if raw JWT string
+    if val.startswith("eyJ") and len(val) > 20 and val.count(".") >= 2:
+        return val
+    # Check if URL-encoded
+    if "%7B" in val or "%22" in val:
+        try:
+            val = urllib.parse.unquote(val)
+        except Exception:
+            pass
+    # Check if JSON string
+    if val.startswith("{") and ("accessToken" in val or "token" in val):
+        try:
+            parsed = json.loads(val)
+            tok = parsed.get("accessToken") or parsed.get("token") or parsed.get("authToken")
+            if tok and isinstance(tok, str) and tok.startswith("eyJ"):
+                return tok.strip()
+        except Exception:
+            pass
+    # Regex search for JWT pattern
+    jwt_match = re.search(r"\b(eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+)\b", val)
+    if jwt_match:
+        return jwt_match.group(1)
+    return None
 
 def extract_user_id_from_jwt(token: str) -> int:
     """Safely extracts Rooter userId from JWT payload."""
@@ -72,8 +104,10 @@ class BrowserManager:
 
     def get_active_token(self, user_id: Optional[int] = None) -> Optional[str]:
         """Returns active Bearer token from config, user session, or any stored session file."""
-        if config.ROOTER_AUTH_TOKEN and len(config.ROOTER_AUTH_TOKEN) > 10:
-            return config.ROOTER_AUTH_TOKEN
+        if config.ROOTER_AUTH_TOKEN:
+            tok = extract_jwt_token(config.ROOTER_AUTH_TOKEN)
+            if tok:
+                return tok
 
         # Check user-specific session file
         if user_id:
@@ -83,16 +117,14 @@ class BrowserManager:
                     with open(s_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         for c in data.get("cookies", []):
-                            if c.get("name") in ("token", "user_auth", "authToken", "rooter_token"):
-                                val = c.get("value")
-                                if val and len(val) > 10:
-                                    return val
+                            tok = extract_jwt_token(c.get("value"))
+                            if tok:
+                                return tok
                         for origin in data.get("origins", []):
                             for item in origin.get("localStorage", []):
-                                if item.get("name") in ("token", "user_auth", "authToken", "rooter_token", "auth_token"):
-                                    val = item.get("value")
-                                    if val and len(val) > 10:
-                                        return val
+                                tok = extract_jwt_token(item.get("value"))
+                                if tok:
+                                    return tok
                 except Exception:
                     pass
 
@@ -102,8 +134,8 @@ class BrowserManager:
             active_accs = account_manager.get_active()
             if active_accs:
                 for a in active_accs:
-                    tok = (a.get("token") or "").strip()
-                    if tok and len(tok) > 10:
+                    tok = extract_jwt_token(a.get("token"))
+                    if tok:
                         return tok
         except Exception:
             pass
@@ -114,10 +146,14 @@ class BrowserManager:
                 with open(sf, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     for c in data.get("cookies", []):
-                        if c.get("name") in ("token", "user_auth", "authToken", "rooter_token"):
-                            val = c.get("value")
-                            if val and len(val) > 10:
-                                return val
+                        tok = extract_jwt_token(c.get("value"))
+                        if tok:
+                            return tok
+                    for origin in data.get("origins", []):
+                        for item in origin.get("localStorage", []):
+                            tok = extract_jwt_token(item.get("value"))
+                            if tok:
+                                return tok
             except Exception:
                 pass
         return None
@@ -142,13 +178,23 @@ class BrowserManager:
         """Creates an authenticated or fresh BrowserContext."""
         await self.initialize()
 
-        active_token = custom_token or self.get_active_token(user_id)
+        raw_active_token = custom_token or self.get_active_token(user_id)
+        active_token = extract_jwt_token(raw_active_token)
 
         storage_path = None
         if apply_storage_state and user_id:
             s_file = self.get_session_file(user_id, "rooter")
             if s_file.exists():
-                storage_path = str(s_file)
+                try:
+                    # Sanitize legacy session file: if it has corrupted URL-encoded cookies, delete it
+                    raw_content = s_file.read_text(encoding="utf-8")
+                    if "%7B%22" in raw_content or "%22accessToken%22" in raw_content:
+                        logger.warning(f"Purging legacy URL-encoded session file: {s_file}")
+                        s_file.unlink(missing_ok=True)
+                    else:
+                        storage_path = str(s_file)
+                except Exception:
+                    storage_path = str(s_file)
 
         context = await self._browser.new_context(
             storage_state=storage_path,
@@ -233,9 +279,12 @@ class BrowserManager:
                     "appVersion": "1.0.0"
                 }
                 raw_cookie_val = json.dumps(auth_data)
+                await context.clear_cookies()
                 await context.add_cookies([
                     {"name": "user_auth", "value": raw_cookie_val, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": raw_cookie_val, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "token", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                 ])
@@ -254,64 +303,67 @@ class BrowserManager:
         """Imports user cookies, storage state, or raw Bearer token."""
         raw_data = raw_data.strip()
         session_file = self.get_session_file(user_id, platform)
-        domain_origin = "https://shop.rooter.gg"
 
         # Check if raw_data is a plain token string (e.g. Bearer eyJ... or eyJ...)
-        clean_token = raw_data
-        if clean_token.lower().startswith("bearer "):
-            clean_token = clean_token[7:].strip()
-
-        # If it's a raw string (not JSON dict or list), treat directly as auth token
-        if not (clean_token.startswith("{") or clean_token.startswith("[")):
-            if len(clean_token) > 10:
-                origins = [
-                    {
-                        "origin": "https://shop.rooter.gg",
-                        "localStorage": [
-                            {"name": "token", "value": clean_token},
-                            {"name": "auth_token", "value": clean_token},
-                            {"name": "rooter_token", "value": clean_token},
-                            {"name": "authToken", "value": clean_token},
-                            {"name": "user_auth", "value": clean_token},
-                        ]
-                    },
-                    {
-                        "origin": "https://rooter.gg",
-                        "localStorage": [
-                            {"name": "token", "value": clean_token},
-                            {"name": "auth_token", "value": clean_token},
-                            {"name": "rooter_token", "value": clean_token},
-                            {"name": "authToken", "value": clean_token},
-                            {"name": "user_auth", "value": clean_token},
-                        ]
-                    }
-                ]
-
-                cookies = [
-                    {"name": "user_auth", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "rooter_token", "value": clean_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "user_auth", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
-                    {"name": "token", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": clean_token, "domain": "shop.rooter.gg", "path": "/"},
-                ]
-
-                payload = {
-                    "cookies": cookies,
-                    "origins": origins
+        jwt_token = extract_jwt_token(raw_data)
+        if jwt_token:
+            uid = extract_user_id_from_jwt(jwt_token)
+            auth_data = {
+                "accessToken": jwt_token,
+                "refreshToken": jwt_token,
+                "userId": uid,
+                "country": "IN",
+                "deviceId": "web-browser",
+                "deviceType": "web",
+                "appVersion": "1.0.0"
+            }
+            raw_user_auth = json.dumps(auth_data)
+            origins = [
+                {
+                    "origin": "https://shop.rooter.gg",
+                    "localStorage": [
+                        {"name": "token", "value": jwt_token},
+                        {"name": "auth_token", "value": jwt_token},
+                        {"name": "rooter_token", "value": jwt_token},
+                        {"name": "authToken", "value": jwt_token},
+                        {"name": "user_auth", "value": raw_user_auth},
+                    ]
+                },
+                {
+                    "origin": "https://rooter.gg",
+                    "localStorage": [
+                        {"name": "token", "value": jwt_token},
+                        {"name": "auth_token", "value": jwt_token},
+                        {"name": "rooter_token", "value": jwt_token},
+                        {"name": "authToken", "value": jwt_token},
+                        {"name": "user_auth", "value": raw_user_auth},
+                    ]
                 }
-                with open(session_file, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
+            ]
 
-                # Update in-memory config so all active workers immediately use it!
-                config.ROOTER_AUTH_TOKEN = clean_token
-                logger.info(f"Saved raw Bearer token for user {user_id} on {platform} and updated ROOTER_AUTH_TOKEN")
-                return True
-            return False
+            cookies = [
+                {"name": "user_auth", "value": raw_user_auth, "domain": ".rooter.gg", "path": "/"},
+                {"name": "user_auth", "value": raw_user_auth, "domain": "shop.rooter.gg", "path": "/"},
+                {"name": "token", "value": jwt_token, "domain": ".rooter.gg", "path": "/"},
+                {"name": "token", "value": jwt_token, "domain": "shop.rooter.gg", "path": "/"},
+                {"name": "authToken", "value": jwt_token, "domain": ".rooter.gg", "path": "/"},
+                {"name": "rooter_token", "value": jwt_token, "domain": ".rooter.gg", "path": "/"},
+            ]
+
+            payload = {
+                "cookies": cookies,
+                "origins": origins
+            }
+            with open(session_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+
+            # Update in-memory config so all active workers immediately use it!
+            config.ROOTER_AUTH_TOKEN = jwt_token
+            logger.info(f"Saved clean JWT session for user {user_id} on {platform} and updated ROOTER_AUTH_TOKEN")
+            return True
 
         try:
-            parsed = json.loads(clean_token)
+            parsed = json.loads(raw_data)
             if isinstance(parsed, list):
                 payload = {"cookies": parsed, "origins": []}
             elif isinstance(parsed, dict):
