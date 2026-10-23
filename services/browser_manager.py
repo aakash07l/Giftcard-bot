@@ -246,32 +246,19 @@ class BrowserManager:
                     localStorage.setItem('token', '{active_token}');
                     localStorage.setItem('authToken', '{active_token}');
                     localStorage.setItem('auth_token', '{active_token}');
+                    document.cookie = "user_auth=" + encodeURIComponent('{escaped_json}') + "; path=/; domain=.rooter.gg";
+                    document.cookie = "token={active_token}; path=/; domain=.rooter.gg";
                 }} catch (e) {{}}
             """
 
         await context.add_init_script(init_script)
 
-        # Inject auth cookies for Rooter so backend API and wallet recognize authenticated session
-        # Rooter Next.js client component calls JSON.parse(Cookies.get("user_auth")), so cookie MUST be raw unencoded JSON
+        # Inject clean alphanumeric auth cookies for Rooter HTTP requests (avoids CloudFront WAF 403 on illegal JSON headers)
         if platform == "rooter" and active_token:
             try:
-                uid = extract_user_id_from_jwt(active_token)
-                auth_data = {
-                    "accessToken": active_token,
-                    "refreshToken": active_token,
-                    "userId": uid,
-                    "country": "IN",
-                    "deviceId": "web-browser",
-                    "deviceType": "web",
-                    "appVersion": "1.0.0"
-                }
-                raw_cookie_val = json.dumps(auth_data)
                 await context.clear_cookies()
                 await context.add_cookies([
-                    {"name": "user_auth", "value": raw_cookie_val, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "user_auth", "value": raw_cookie_val, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "token", "value": active_token, "domain": "shop.rooter.gg", "path": "/"},
                     {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                 ])
