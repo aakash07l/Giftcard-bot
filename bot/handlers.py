@@ -617,7 +617,8 @@ async def run_sniper_loop(
                         for cand_d in available_denominations:
                             if cand_d <= bal:
                                 target_d = cand_d
-                                target_q = 1  # Rooter restricts PlayStation to 1 card per transaction
+                                affordable_q = int(bal // cand_d)
+                                target_q = min(affordable_q, 2)  # Up to 2 per order if balance permits
                                 break
                     else:
                         # Balance untracked: pick highest available denomination, quantity 1

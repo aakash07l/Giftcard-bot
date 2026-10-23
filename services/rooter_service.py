@@ -447,17 +447,29 @@ class RooterService(BasePlatform):
                                 message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to grab it when restocked.",
                             )
 
-            # 2. PlayStation vouchers on Rooter are restricted to 1 per order
-            # Avoid wasting time looking for non-existent '+' buttons for PlayStation
-            if prod_info["type"] != "playstation" and quantity > 1:
+            # 2. Increment quantity if requested (supports Rooter Mantine ActionIcon stepper & NumberInput)
+            if quantity > 1:
                 try:
                     for _ in range(quantity - 1):
-                        plus_btn = page.locator("button:has-text('+'), div[class*='qty'] button:has-text('+'), div[class*='quantity'] button:has-text('+'), [aria-label*='increase']").first
-                        if await plus_btn.is_visible(timeout=500):
-                            await plus_btn.click(force=True, timeout=500)
+                        plus_btn = page.locator(
+                            "button.mantine-ActionIcon-root:has-text('+'), "
+                            "div[class*='wrapper'] button:has-text('+'), "
+                            "div[class*='quantitySelector'] button:has-text('+'), "
+                            "button:has-text('+'), [aria-label*='increase']"
+                        ).first
+                        if await plus_btn.is_visible(timeout=800):
+                            await plus_btn.click(force=True, timeout=800)
                             await page.wait_for_timeout(100)
+                        else:
+                            # Direct NumberInput support inside Mantine quantity stepper
+                            qty_input = page.locator("div[class*='wrapper'] input, div[class*='quantitySelector'] input").first
+                            if await qty_input.is_visible(timeout=300):
+                                await qty_input.fill(str(quantity))
+                                await qty_input.dispatch_event("input")
+                                await qty_input.dispatch_event("change")
+                                break
                 except Exception as qe:
-                    logger.debug(f"Could not increment quantity: {qe}")
+                    logger.debug(f"Quantity increment notice: {qe}")
 
             # 3. Handle Simulation Mode
             if simulation:
