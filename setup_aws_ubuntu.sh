@@ -30,10 +30,10 @@ fi
 # 2. Update packages & install Python, Git, and Chromium dependencies
 echo "📦 Installing system dependencies..."
 sudo apt-get update -y
-sudo apt-get install -y python3 python3-pip python3-venv git curl \
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-    libgbm1 libpango-1.0-0 libcairo2 libasound2 fonts-liberation
+sudo apt-get install -y python3 python3-pip python3-venv git curl fonts-liberation
+
+# Install sound library (libasound2t64 on Ubuntu 24.04+, libasound2 on 22.04)
+sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
 
 # 3. Create Python Virtual Environment
 CURRENT_DIR=$(pwd)
@@ -48,9 +48,9 @@ echo "📦 Installing Python libraries & Playwright..."
 ./venv/bin/pip install --upgrade pip
 ./venv/bin/pip install -r requirements.txt
 
-# 4. Install Playwright Chromium headless binary
-echo "🌐 Installing Chromium browser for Playwright..."
-./venv/bin/python -m playwright install chromium
+# 4. Install Playwright Chromium headless binary and system dependencies
+echo "🌐 Installing Chromium browser and system libraries for Playwright..."
+./venv/bin/python -m playwright install --with-deps chromium || ./venv/bin/python -m playwright install chromium
 
 # 5. Create directories
 mkdir -p sessions screenshots
