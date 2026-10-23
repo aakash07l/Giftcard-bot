@@ -375,11 +375,13 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
     browser_context = None
     page = None
     try:
-        # Launch browser context with stored user session if available
+        # Launch browser context with stored user session or active account token
+        active_tok = browser_manager.get_active_token(user_id)
         browser_context = await browser_manager.create_context(
             user_id=user_id,
             platform=platform,
             apply_storage_state=True,
+            custom_token=active_tok,
         )
         page = await browser_context.new_page()
 
@@ -506,10 +508,13 @@ async def run_sniper_loop(
     logger.info(f"Starting sniper loop for user {user_id} on {platform} ₹{denomination}")
 
     try:
+        # Inject primary account token into monitor context
+        primary_tok = browser_manager.get_active_token(user_id)
         browser_context = await browser_manager.create_context(
             user_id=user_id,
             platform=platform,
             apply_storage_state=True,
+            custom_token=primary_tok,
         )
         page = await browser_context.new_page()
         is_any_mode = (denomination == 0)
@@ -612,8 +617,7 @@ async def run_sniper_loop(
                         for cand_d in available_denominations:
                             if cand_d <= bal:
                                 target_d = cand_d
-                                affordable_q = int(bal // cand_d)
-                                target_q = min(affordable_q, 2)  # Max 2 per order
+                                target_q = 1  # Rooter restricts PlayStation to 1 card per transaction
                                 break
                     else:
                         # Balance untracked: pick highest available denomination, quantity 1

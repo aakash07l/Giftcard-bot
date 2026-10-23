@@ -399,14 +399,17 @@ class RooterService(BasePlatform):
                 # Default selection on Google Play product page is already ₹10
                 pass
             else:
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
+                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
+                    has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)
+                ).first
                 if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+                    denom_opt = page.locator("label").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
+                if await denom_opt.count() == 0:
+                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
 
                 if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
-                    if "out of stock" in card_text.lower():
+                    chip_text = (await denom_opt.inner_text()).lower()
+                    if "out of stock" in chip_text or "sold out" in chip_text:
                         return PurchaseResult(
                             success=False,
                             platform="rooter",
@@ -415,22 +418,43 @@ class RooterService(BasePlatform):
                             account_label=account_label,
                             message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
                         )
+
+                    # Click the Mantine label or wrapper directly to guarantee React state change
+                    chip_label = denom_opt.locator("label").first
                     try:
-                        await target_card.click(force=True, timeout=2500)
+                        if await chip_label.count() > 0:
+                            await chip_label.click(force=True, timeout=1500)
+                        else:
+                            await denom_opt.click(force=True, timeout=1500)
                     except Exception:
                         try:
-                            await target_card.dispatch_event("click")
+                            await denom_opt.dispatch_event("click")
                         except Exception:
                             pass
-                    await page.wait_for_timeout(300)
+                    await page.wait_for_timeout(200)
 
-            # 2. Increment quantity if quantity > 1 (e.g. 2 per order)
-            if quantity > 1:
+                    # Early out-of-stock check on bottom button to avoid needless 10s wait
+                    bottom_chk = page.locator("button[data-testid='proceed-to-pay'], button.styles_paymentBtn__TiXtN").first
+                    if await bottom_chk.count() > 0:
+                        b_txt = (await bottom_chk.inner_text()).lower()
+                        if "out of stock" in b_txt:
+                            return PurchaseResult(
+                                success=False,
+                                platform="rooter",
+                                denomination=denomination,
+                                quantity=quantity,
+                                account_label=account_label,
+                                message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to grab it when restocked.",
+                            )
+
+            # 2. PlayStation vouchers on Rooter are restricted to 1 per order
+            # Avoid wasting time looking for non-existent '+' buttons for PlayStation
+            if prod_info["type"] != "playstation" and quantity > 1:
                 try:
                     for _ in range(quantity - 1):
                         plus_btn = page.locator("button:has-text('+'), div[class*='qty'] button:has-text('+'), div[class*='quantity'] button:has-text('+'), [aria-label*='increase']").first
-                        if await plus_btn.is_visible(timeout=800):
-                            await plus_btn.click(force=True, timeout=800)
+                        if await plus_btn.is_visible(timeout=500):
+                            await plus_btn.click(force=True, timeout=500)
                             await page.wait_for_timeout(100)
                 except Exception as qe:
                     logger.debug(f"Could not increment quantity: {qe}")

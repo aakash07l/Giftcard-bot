@@ -96,6 +96,18 @@ class BrowserManager:
                 except Exception:
                     pass
 
+        # Check AccountManager active accounts
+        try:
+            from services.account_manager import account_manager
+            active_accs = account_manager.get_active()
+            if active_accs:
+                for a in active_accs:
+                    tok = (a.get("token") or "").strip()
+                    if tok and len(tok) > 10:
+                        return tok
+        except Exception:
+            pass
+
         # Check any available session files
         for sf in config.SESSION_DIR.glob("user_*_rooter.json"):
             try:
@@ -111,8 +123,14 @@ class BrowserManager:
         return None
 
     def has_session(self, user_id: int, platform: str) -> bool:
-        """Checks if a user session file exists or if active AUTH_TOKEN is present."""
-        return self.get_active_token(user_id) is not None
+        """Checks if a user session file exists or if active AUTH_TOKEN / AccountManager account is present."""
+        if self.get_active_token(user_id) is not None:
+            return True
+        try:
+            from services.account_manager import account_manager
+            return len(account_manager.get_active()) > 0
+        except Exception:
+            return False
 
     async def create_context(
         self,
