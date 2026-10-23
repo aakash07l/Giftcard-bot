@@ -160,11 +160,12 @@ class BrowserManager:
             timezone_id="Asia/Kolkata",
         )
 
-        # Block media resources (images, fonts, videos) to drastically save RAM, CPU, and Railway bandwidth
+        # Block heavy media resources (images, videos) to save RAM, CPU, and bandwidth
+        # Keep SVGs and fonts unblocked so Next.js / Mantine UI renders without client-side exceptions
         if config.BLOCK_MEDIA_RESOURCES:
             try:
                 await context.route(
-                    "**/*.{png,jpg,jpeg,webp,gif,svg,woff,woff2,ttf,eot,mp4,webm,avi,mp3}",
+                    "**/*.{png,jpg,jpeg,webp,gif,mp4,webm,avi,mp3}",
                     lambda route: route.abort()
                 )
             except Exception:
@@ -203,10 +204,11 @@ class BrowserManager:
                 "deviceType": "web",
                 "appVersion": "1.0.0"
             }
-            auth_str = json.dumps(auth_obj).replace("'", "\\'")
+            raw_auth_json = json.dumps(auth_obj)
+            escaped_json = raw_auth_json.replace("\\", "\\\\").replace("'", "\\'")
             init_script += f"""
                 try {{
-                    localStorage.setItem('user_auth', '{auth_str}');
+                    localStorage.setItem('user_auth', '{escaped_json}');
                     localStorage.setItem('rooter_token', '{active_token}');
                     localStorage.setItem('token', '{active_token}');
                     localStorage.setItem('authToken', '{active_token}');
@@ -217,6 +219,7 @@ class BrowserManager:
         await context.add_init_script(init_script)
 
         # Inject auth cookies for Rooter so backend API and wallet recognize authenticated session
+        # Rooter Next.js client component calls JSON.parse(Cookies.get("user_auth")), so cookie MUST be raw unencoded JSON
         if platform == "rooter" and active_token:
             try:
                 uid = extract_user_id_from_jwt(active_token)
@@ -229,9 +232,9 @@ class BrowserManager:
                     "deviceType": "web",
                     "appVersion": "1.0.0"
                 }
-                encoded_auth = urllib.parse.quote(json.dumps(auth_data))
+                raw_cookie_val = json.dumps(auth_data)
                 await context.add_cookies([
-                    {"name": "user_auth", "value": encoded_auth, "domain": ".rooter.gg", "path": "/"},
+                    {"name": "user_auth", "value": raw_cookie_val, "domain": ".rooter.gg", "path": "/"},
                     {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
                     {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},

@@ -420,18 +420,15 @@ class RooterService(BasePlatform):
                         )
 
                     # Click the Mantine label or wrapper directly to guarantee React state change
-                    chip_label = denom_opt.locator("label").first
+                    chip_label = denom_opt.locator("label").first if await denom_opt.locator("label").count() > 0 else denom_opt
                     try:
-                        if await chip_label.count() > 0:
-                            await chip_label.click(force=True, timeout=1500)
-                        else:
-                            await denom_opt.click(force=True, timeout=1500)
+                        await chip_label.click(force=True, timeout=1500)
                     except Exception:
                         try:
                             await denom_opt.dispatch_event("click")
                         except Exception:
                             pass
-                    await page.wait_for_timeout(200)
+                    await page.wait_for_timeout(250)
 
                     # Early out-of-stock check on bottom button to avoid needless 10s wait
                     bottom_chk = page.locator("button[data-testid='proceed-to-pay'], button.styles_paymentBtn__TiXtN").first
@@ -453,20 +450,22 @@ class RooterService(BasePlatform):
                     for _ in range(quantity - 1):
                         plus_btn = page.locator(
                             "button.mantine-ActionIcon-root:has-text('+'), "
-                            "div[class*='wrapper'] button:has-text('+'), "
                             "div[class*='quantitySelector'] button:has-text('+'), "
+                            "div[class*='wrapper'] button:has-text('+'), "
                             "button:has-text('+'), [aria-label*='increase']"
                         ).first
-                        if await plus_btn.is_visible(timeout=800):
+                        if await plus_btn.is_visible(timeout=1200):
                             await plus_btn.click(force=True, timeout=800)
-                            await page.wait_for_timeout(100)
+                            await page.wait_for_timeout(150)
+                            logger.info(f"[Rooter] Clicked '+' button to increment quantity (target: {quantity})")
                         else:
                             # Direct NumberInput support inside Mantine quantity stepper
-                            qty_input = page.locator("div[class*='wrapper'] input, div[class*='quantitySelector'] input").first
-                            if await qty_input.is_visible(timeout=300):
+                            qty_input = page.locator("div[class*='quantitySelector'] input, div[class*='wrapper'] input, input[type='number']").first
+                            if await qty_input.is_visible(timeout=400):
                                 await qty_input.fill(str(quantity))
                                 await qty_input.dispatch_event("input")
                                 await qty_input.dispatch_event("change")
+                                logger.info(f"[Rooter] Filled quantity input with {quantity}")
                                 break
                 except Exception as qe:
                     logger.debug(f"Quantity increment notice: {qe}")
