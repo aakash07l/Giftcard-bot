@@ -229,13 +229,14 @@ class BrowserManager:
                 runtime: {}
             };
         """
+        raw_auth_json = None
         if active_token:
             uid = extract_user_id_from_jwt(active_token)
             auth_obj = {
+                "country": "IN",
                 "accessToken": active_token,
                 "refreshToken": active_token,
                 "userId": uid,
-                "country": "IN",
                 "deviceId": "web-browser",
                 "deviceType": "web",
                 "appVersion": "1.0.0"
@@ -252,6 +253,7 @@ class BrowserManager:
                     localStorage.setItem('country', 'IN');
                     localStorage.setItem('COUNTRY', 'IN');
                     localStorage.setItem('currency', 'INR');
+                    document.cookie = "user_auth=" + encodeURIComponent('{escaped_json}') + "; path=/; domain=.rooter.gg; secure; samesite=none";
                     document.cookie = "COUNTRY=IN; path=/; domain=.rooter.gg";
                     document.cookie = "country=IN; path=/; domain=.rooter.gg";
                     document.cookie = "currency=INR; path=/; domain=.rooter.gg";
@@ -268,6 +270,16 @@ class BrowserManager:
                     {"name": "country", "value": "IN", "domain": ".rooter.gg", "path": "/"},
                     {"name": "currency", "value": "INR", "domain": ".rooter.gg", "path": "/"},
                 ]
+                if raw_auth_json:
+                    encoded_cookie = urllib.parse.quote(raw_auth_json)
+                    cookies_to_add.append({
+                        "name": "user_auth",
+                        "value": encoded_cookie,
+                        "domain": ".rooter.gg",
+                        "path": "/",
+                        "secure": True,
+                        "sameSite": "None",
+                    })
                 await context.add_cookies(cookies_to_add)
             except Exception as e:
                 logger.warning(f"Failed to inject Rooter cookies: {e}")
