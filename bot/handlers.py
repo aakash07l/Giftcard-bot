@@ -221,11 +221,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = format_status_text(user_id)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard(),
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
+        except Exception:
+            await update.callback_query.message.reply_text(
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
     else:
         await update.message.reply_text(
             text=text,
@@ -1645,7 +1652,10 @@ async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        try:
+            await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            await query.message.reply_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
     else:
         await update.message.reply_text(text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
 

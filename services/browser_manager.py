@@ -261,8 +261,6 @@ class BrowserManager:
                     localStorage.setItem('country', 'IN');
                     localStorage.setItem('COUNTRY', 'IN');
                     localStorage.setItem('currency', 'INR');
-                    document.cookie = "user_auth=" + encodeURIComponent('{escaped_json}') + "; path=/; domain=.rooter.gg";
-                    document.cookie = "token={active_token}; path=/; domain=.rooter.gg";
                     document.cookie = "COUNTRY=IN; path=/; domain=.rooter.gg";
                     document.cookie = "country=IN; path=/; domain=.rooter.gg";
                     document.cookie = "currency=INR; path=/; domain=.rooter.gg";
@@ -271,7 +269,7 @@ class BrowserManager:
 
         await context.add_init_script(init_script)
 
-        # Inject clean alphanumeric auth cookies and India store cookies (bypasses location popup & CloudFront WAF)
+        # Inject clean store cookies (bypasses location popup & CloudFront WAF)
         if platform == "rooter":
             try:
                 cookies_to_add = [
@@ -279,12 +277,6 @@ class BrowserManager:
                     {"name": "country", "value": "IN", "domain": ".rooter.gg", "path": "/"},
                     {"name": "currency", "value": "INR", "domain": ".rooter.gg", "path": "/"},
                 ]
-                if active_token:
-                    cookies_to_add.extend([
-                        {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                        {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                        {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                    ])
                 await context.add_cookies(cookies_to_add)
             except Exception as e:
                 logger.warning(f"Failed to inject Rooter cookies: {e}")

@@ -705,15 +705,18 @@ class RooterService(BasePlatform):
                 await progress_callback("Navigating to Amazon Pay Gift Card page...", "🔍")
 
             if target_url not in page.url:
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
-                await page.wait_for_timeout(1000)
+                try:
+                    await page.goto(target_url, wait_until="networkidle", timeout=15000)
+                except Exception:
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
+                await page.wait_for_timeout(1200)
 
             await self.dismiss_location_popup(page)
 
             try:
                 await page.wait_for_selector(
-                    "div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='chip'], label:has-text('10')",
-                    timeout=10000,
+                    "div[class*='chipRoot'], div[class*='mantine-Chip-root'], label:has-text('10'), input[type='radio']",
+                    timeout=8000,
                 )
             except Exception:
                 pass
@@ -724,8 +727,41 @@ class RooterService(BasePlatform):
             chip_selected = False
             for attempt in range(1, 6):
                 await self.dismiss_location_popup(page)
+
+                # Strategy 1: Direct label containing 10 and 9.92 (Rooter Amazon Pay ₹10 card has ₹9.92 discounted price)
+                opt_10 = page.locator("label").filter(has_text=re.compile(r"\b10\b")).filter(has_text=re.compile(r"9\.92|10")).first
+                if await opt_10.count() == 0:
+                    # Strategy 2: Mantine chip container containing 10
+                    opt_10 = page.locator("div[class*='chipRoot'], div[class*='mantine-Chip-root']").filter(has_text=re.compile(r"\b10\b")).first
+                if await opt_10.count() == 0:
+                    # Strategy 3: Radio input for 10 denomination
+                    opt_10 = page.locator("input[type='radio'][value='68b68d024068694101114677']").first
+
+                if await opt_10.count() > 0 and await opt_10.is_visible():
+                    txt = (await opt_10.inner_text()).lower()
+                    if "out of stock" in txt or "sold out" in txt:
+                        shot_path = await browser_manager.capture_screenshot(page, "amazon_10_oos")
+                        return PurchaseResult(
+                            success=False,
+                            platform="rooter",
+                            denomination=10,
+                            quantity=quantity,
+                            account_label=account_label,
+                            message="Amazon Pay ₹10 Gift Card is currently Out of Stock on Rooter Shop.",
+                            error_screenshot=shot_path,
+                        )
+                    try:
+                        await opt_10.click(force=True, timeout=2000)
+                    except Exception:
+                        await opt_10.dispatch_event("click")
+                    await page.wait_for_timeout(500)
+                    chip_selected = True
+                    logger.info(f"[Amazon Test Buy] Selected ₹10 chip via direct locator on attempt {attempt}")
+                    break
+
+                # Strategy 4: Fallback to scanning all chips/radio buttons
                 chips = page.locator(
-                    "div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='chip'], div[data-testid*='chip']"
+                    "div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='mantine-Chip-root'], div[class*='chip'], div[data-testid*='chip']"
                 )
                 count = await chips.count()
                 logger.info(f"[Amazon Test Buy] Attempt {attempt}/5: Found {count} chips on page.")
@@ -810,8 +846,9 @@ class RooterService(BasePlatform):
             buy_btn_selector = (
                 "button[data-testid='proceed-to-pay'], button[testid='proceed-to-pay'], "
                 "button[data-testid='add-address-btn'], button[testid='add-address-btn'], "
-                "button.styles_paymentBtn__TiXtN, button:has-text('Pay ₹'), button:has-text('Proceed to Pay'), "
-                "button:has-text('Pay via wallet'), button:has-text('Buy Now')"
+                "button.styles_paymentBtn__TiXtN, button:has-text('Pay ₹9.92'), button:has-text('Pay 9.92'), "
+                "button:has-text('Pay ₹'), button:has-text('Pay ?'), button:has-text('Proceed to Pay'), "
+                "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Pay')"
             )
 
             main_clicked = False
