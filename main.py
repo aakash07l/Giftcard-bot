@@ -62,6 +62,7 @@ from bot.handlers import (
     acc_remove_callback,
     add_account_command,
     set_balance_command,
+    settoken_command,
     stop_playstore_handler,
 )
 from services.browser_manager import browser_manager
@@ -201,6 +202,7 @@ def build_application():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("accounts", accounts_command))
     app.add_handler(CommandHandler("addaccount", add_account_command))
+    app.add_handler(CommandHandler("settoken", settoken_command))
     app.add_handler(CommandHandler("setbalance", set_balance_command))
     app.add_handler(CommandHandler("stop_playstore", stop_playstore_handler))
     app.add_handler(CommandHandler("psonly", stop_playstore_handler))

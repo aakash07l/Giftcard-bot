@@ -19,7 +19,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📊 Status & Sessions", callback_data="status_check"),
         ],
         [
-            InlineKeyboardButton("🛑 Stop Play Store / Auto-Sniper", callback_data="stop_playstore_action"),
+            InlineKeyboardButton("🛑 Stop Auto-Sniper", callback_data="stop_snipe_action"),
             InlineKeyboardButton("⚙️ Toggle Sim Mode", callback_data="toggle_sim"),
         ],
         [
@@ -52,10 +52,9 @@ def get_accounts_keyboard(accounts: List[Dict[str, Any]]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(rows)
 
 def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard to cancel active auto-sniper or stop Play Store."""
+    """Keyboard to cancel active auto-sniper."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🛑 Stop Auto-Sniper", callback_data="stop_snipe_action")],
-        [InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action")],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")],
     ])
 
@@ -115,9 +114,6 @@ def get_denominations_keyboard(platform: str = "rooter", denominations: List[int
         rows.append(current_row)
 
     rows.append([
-        InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action"),
-    ])
-    rows.append([
         InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),
     ])
@@ -146,9 +142,6 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
     if current_row:
         rows.append(current_row)
 
-    rows.append([
-        InlineKeyboardButton("🛑 Stop Play Store (PS Only)", callback_data="stop_playstore_action"),
-    ])
     rows.append([
         InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
         InlineKeyboardButton("❌ Cancel", callback_data="cancel_action"),

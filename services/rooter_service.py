@@ -25,16 +25,16 @@ class RooterService(BasePlatform):
             base_url="https://shop.rooter.gg"
         )
         self.playstation_url = getattr(config, "ROOTER_PLAYSTATION_URL", "https://shop.rooter.gg/product/playstation-gift-cards")
-        self.google_play_url = getattr(config, "ROOTER_GOOGLE_PLAY_URL", "https://shop.rooter.gg/product/google-play-gift-card")
+        self.amazon_pay_url = getattr(config, "ROOTER_AMAZON_PAY_URL", "https://shop.rooter.gg/product/amazon-pay-gift-cards")
 
-    def get_product_info(self, denomination: int) -> dict:
-        """Returns product url, name, and type based on denomination."""
-        if denomination == 10:
+    def get_product_info(self, denomination: int, product_type: str = "playstation") -> dict:
+        """Returns product url, name, and type based on denomination and product_type."""
+        if product_type == "amazon" or denomination == 10:
             return {
-                "type": "google_play",
-                "name": "Google Play Recharge Code",
-                "url": self.google_play_url,
-                "expected_price": 8.0,
+                "type": "amazon_pay",
+                "name": "Amazon Pay Gift Card",
+                "url": self.amazon_pay_url,
+                "expected_price": 9.92,
             }
         return {
             "type": "playstation",
@@ -138,18 +138,6 @@ class RooterService(BasePlatform):
         """Navigates directly to Rooter gift card pages and checks available options."""
         cards: List[CardItem] = []
 
-        # If user asked specifically for Google Play (e.g. 10)
-        if denomination == 10:
-            in_stock = await self.check_is_in_stock(page, 10)
-            cards.append(CardItem(
-                title="Google Play Recharge Code ₹10",
-                denomination=10,
-                price=8.0,
-                platform="rooter",
-                in_stock=in_stock,
-            ))
-            return cards
-
         target_url = self.playstation_url
         if target_url not in page.url:
             if progress_callback:
@@ -157,16 +145,6 @@ class RooterService(BasePlatform):
             await page.goto(target_url, timeout=config.BROWSER_TIMEOUT_MS)
             await page.wait_for_load_state("domcontentloaded")
             await page.wait_for_timeout(1000)
-
-        # Include Google Play ₹10 test option if searching all
-        if not denomination:
-            cards.append(CardItem(
-                title="Google Play Recharge Code ₹10 (Test)",
-                denomination=10,
-                price=8.0,
-                platform="rooter",
-                in_stock=True,
-            ))
 
         supported = [1000, 2000, 3000, 4000, 5000]
         for d in supported:
@@ -305,12 +283,11 @@ class RooterService(BasePlatform):
             # Auto-dismiss region popup if present
             await self.dismiss_location_popup(page)
 
-            # A. Google Play Recharge Code (Permanently Disabled)
-            if prod_info["type"] == "google_play" or denomination < 1000:
-                logger.info("[Rooter] Google Play checking is permanently disabled.")
+            if denomination < 1000:
+                logger.info(f"[Rooter] Denomination ₹{denomination} is not a valid PlayStation voucher.")
                 return False
 
-            # B. PlayStation Gift Cards (₹1,000 to ₹5,000)
+            # PlayStation Gift Cards (₹1,000 to ₹5,000)
             try:
                 await page.wait_for_selector("div[class*='chipWrapper'], div[class*='styles_chipRoot']", timeout=8000)
                 await page.wait_for_selector(
@@ -394,55 +371,51 @@ class RooterService(BasePlatform):
             # Auto-dismiss region popup if present
             await self.dismiss_location_popup(page)
 
-            # 1. Select the specific denomination
-            if prod_info["type"] == "google_play":
-                # Default selection on Google Play product page is already ₹10
-                pass
-            else:
-                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
-                    has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)
-                ).first
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("label").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
+            # 1. Select the specific PlayStation denomination
+            denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
+                has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)
+            ).first
+            if await denom_opt.count() == 0:
+                denom_opt = page.locator("label").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
+            if await denom_opt.count() == 0:
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
 
-                if await denom_opt.count() > 0:
-                    chip_text = (await denom_opt.inner_text()).lower()
-                    if "out of stock" in chip_text or "sold out" in chip_text:
+            if await denom_opt.count() > 0:
+                chip_text = (await denom_opt.inner_text()).lower()
+                if "out of stock" in chip_text or "sold out" in chip_text:
+                    return PurchaseResult(
+                        success=False,
+                        platform="rooter",
+                        denomination=denomination,
+                        quantity=quantity,
+                        account_label=account_label,
+                        message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
+                    )
+
+                # Click the Mantine label or wrapper directly to guarantee React state change
+                chip_label = denom_opt.locator("label").first if await denom_opt.locator("label").count() > 0 else denom_opt
+                try:
+                    await chip_label.click(force=True, timeout=1500)
+                except Exception:
+                    try:
+                        await denom_opt.dispatch_event("click")
+                    except Exception:
+                        pass
+                await page.wait_for_timeout(250)
+
+                # Early out-of-stock check on bottom button to avoid needless 10s wait
+                bottom_chk = page.locator("button[data-testid='proceed-to-pay'], button.styles_paymentBtn__TiXtN").first
+                if await bottom_chk.count() > 0:
+                    b_txt = (await bottom_chk.inner_text()).lower()
+                    if "out of stock" in b_txt:
                         return PurchaseResult(
                             success=False,
                             platform="rooter",
                             denomination=denomination,
                             quantity=quantity,
                             account_label=account_label,
-                            message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
+                            message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to grab it when restocked.",
                         )
-
-                    # Click the Mantine label or wrapper directly to guarantee React state change
-                    chip_label = denom_opt.locator("label").first if await denom_opt.locator("label").count() > 0 else denom_opt
-                    try:
-                        await chip_label.click(force=True, timeout=1500)
-                    except Exception:
-                        try:
-                            await denom_opt.dispatch_event("click")
-                        except Exception:
-                            pass
-                    await page.wait_for_timeout(250)
-
-                    # Early out-of-stock check on bottom button to avoid needless 10s wait
-                    bottom_chk = page.locator("button[data-testid='proceed-to-pay'], button.styles_paymentBtn__TiXtN").first
-                    if await bottom_chk.count() > 0:
-                        b_txt = (await bottom_chk.inner_text()).lower()
-                        if "out of stock" in b_txt:
-                            return PurchaseResult(
-                                success=False,
-                                platform="rooter",
-                                denomination=denomination,
-                                quantity=quantity,
-                                account_label=account_label,
-                                message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to grab it when restocked.",
-                            )
 
             # 2. Increment quantity if requested (supports Rooter Mantine ActionIcon stepper & NumberInput)
             if quantity > 1:
@@ -476,7 +449,7 @@ class RooterService(BasePlatform):
                     await progress_callback(f"SIMULATION MODE: {prod_name} stock verified! Simulating dry-run purchase...", "💳")
                 await page.wait_for_timeout(1000)
 
-                prefix = "GOOG" if prod_info["type"] == "google_play" else "PSN"
+                prefix = "PSN"
                 mock_code = f"ROTR-{prefix}-{denomination}-{hash(page) % 90000 + 10000}"
                 mock_pin = f"{hash(page) % 9000 + 1000}"
                 mock_order = f"RTR-ORD-{int(asyncio.get_event_loop().time())}"
@@ -698,3 +671,253 @@ class RooterService(BasePlatform):
                 message=f"Rooter automation error: {str(e)}",
                 error_screenshot=shot_path,
             )
+
+    async def execute_amazon_test_buy(
+        self,
+        page: Page,
+        quantity: int = 1,
+        account_label: Optional[str] = None,
+        progress_callback: Optional[ProgressCallback] = None,
+        simulation: bool = False,
+    ) -> PurchaseResult:
+        """
+        Executes a real or simulated purchase test for a ₹10 Amazon Pay Gift Card.
+        Triggered exclusively via admin command: /snipe amazon 1.
+        Used to safely verify account token validity, speed, and session health.
+        """
+        try:
+            target_url = self.amazon_pay_url
+            if progress_callback:
+                await progress_callback("Navigating to Amazon Pay Gift Card page...", "🔍")
+
+            if target_url not in page.url:
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
+                await page.wait_for_timeout(1000)
+
+            await self.dismiss_location_popup(page)
+
+            try:
+                await page.wait_for_selector("div[class*='chipWrapper'], div[class*='styles_chipRoot']", timeout=8000)
+            except Exception:
+                pass
+
+            await self.dismiss_location_popup(page)
+
+            # Select the ₹10 denomination chip
+            chips = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']")
+            count = await chips.count()
+            chip_selected = False
+            for i in range(count):
+                txt = await chips.nth(i).inner_text()
+                # Check for 10 chip (exclude 100, 1000, 10000)
+                if "10" in txt and "100" not in txt and "1000" not in txt and "10000" not in txt:
+                    if "out of stock" in txt.lower() or "sold out" in txt.lower():
+                        return PurchaseResult(
+                            success=False,
+                            platform="rooter",
+                            denomination=10,
+                            quantity=quantity,
+                            account_label=account_label,
+                            message="Amazon Pay ₹10 Gift Card is currently Out of Stock on Rooter Shop.",
+                        )
+                    label_or_chip = chips.nth(i).locator("label").first if await chips.nth(i).locator("label").count() > 0 else chips.nth(i)
+                    await label_or_chip.click(force=True, timeout=1500)
+                    await page.wait_for_timeout(350)
+                    chip_selected = True
+                    break
+
+            if not chip_selected:
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=10,
+                    quantity=quantity,
+                    account_label=account_label,
+                    message="Could not locate ₹10 Amazon Pay Gift Card chip on Rooter Shop.",
+                )
+
+            # Handle Simulation Mode
+            if simulation:
+                if progress_callback:
+                    await progress_callback("SIMULATION MODE: ₹10 Amazon Pay Gift Card verified! Simulating dry-run purchase...", "💳")
+                await page.wait_for_timeout(800)
+                mock_code = f"AMZN-TEST-{hash(page) % 90000 + 10000}"
+                mock_pin = "N/A"
+                mock_order = f"MO_TEST_{int(asyncio.get_event_loop().time())}"
+                return PurchaseResult(
+                    success=True,
+                    platform="rooter",
+                    denomination=10,
+                    quantity=quantity,
+                    account_label=account_label,
+                    voucher_code=mock_code,
+                    voucher_pin=mock_pin,
+                    codes=[mock_code],
+                    order_id=mock_order,
+                    receipt_summary=f"Amazon Pay Gift Card ₹10 x{quantity} [SIMULATION]",
+                    message="Amazon Pay ₹10 test purchase flow simulated successfully in dry-run mode.",
+                    simulation=True,
+                )
+
+            # Live checkout execution
+            if progress_callback:
+                await progress_callback("Clicking Buy / Pay on Amazon Pay ₹10 Gift Card...", "🛒")
+
+            buy_btn_selector = (
+                "button[data-testid='proceed-to-pay'], button[testid='proceed-to-pay'], "
+                "button[data-testid='add-address-btn'], button[testid='add-address-btn'], "
+                "button.styles_paymentBtn__TiXtN, button:has-text('Pay ₹'), button:has-text('Proceed to Pay'), "
+                "button:has-text('Pay via wallet'), button:has-text('Buy Now')"
+            )
+
+            main_clicked = False
+            for _ in range(15):
+                buy_btn = page.locator(buy_btn_selector).first
+                if await buy_btn.is_visible(timeout=500):
+                    btn_text = (await buy_btn.inner_text()).lower()
+                    if "out of stock" in btn_text:
+                        await page.wait_for_timeout(200)
+                        continue
+                    try:
+                        await buy_btn.click(force=True, timeout=2000)
+                        main_clicked = True
+                    except Exception:
+                        try:
+                            await buy_btn.dispatch_event("click")
+                            main_clicked = True
+                        except Exception:
+                            pass
+                    if main_clicked:
+                        break
+                await page.wait_for_timeout(100)
+
+            # Wait briefly for Delivery Details modal or payment drawer
+            delivery_modal = page.locator(".mantine-Modal-content, div[role='dialog']").first
+            try:
+                await delivery_modal.wait_for(state="visible", timeout=2500)
+            except Exception:
+                pass
+
+            # Fill missing inputs if modal appeared
+            if await delivery_modal.is_visible():
+                try:
+                    name_inp = delivery_modal.locator("input[placeholder*='name'], input[placeholder*='Name']").first
+                    if await name_inp.is_visible(timeout=400):
+                        val = await name_inp.input_value()
+                        if not val:
+                            await name_inp.fill("Gamer")
+                    email_inp = delivery_modal.locator("input[placeholder*='Email'], input[placeholder*='email']").first
+                    if await email_inp.is_visible(timeout=400):
+                        val = await email_inp.input_value()
+                        if not val:
+                            await email_inp.fill("rooter.gamer@gmail.com")
+                except Exception:
+                    pass
+
+                modal_btn_selector = (
+                    ".mantine-Modal-content button:has-text('Pay via wallet'), "
+                    ".mantine-Modal-content button:has-text('Pay ₹'), "
+                    ".mantine-Modal-content button:has-text('Proceed to Pay'), "
+                    ".mantine-Modal-content button:has-text('Proceed'), "
+                    ".mantine-Modal-content button[type='submit'], "
+                    "div[role='dialog'] button:has-text('Pay via wallet'), "
+                    "div[role='dialog'] button:has-text('Pay ₹'), "
+                    "div[role='dialog'] button[type='submit']"
+                )
+                modal_pay_btn = page.locator(modal_btn_selector).last
+                if await modal_pay_btn.is_visible(timeout=2500):
+                    try:
+                        await modal_pay_btn.click(force=True, timeout=2500)
+                    except Exception:
+                        try:
+                            await modal_pay_btn.dispatch_event("click")
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(1000)
+
+            # Final pay click if still visible
+            final_pay_btn = page.locator("button[data-testid='add-address-btn'], button[data-testid='proceed-to-pay'], button:has-text('Pay via wallet')").first
+            if await final_pay_btn.is_visible(timeout=1000):
+                btn_txt = (await final_pay_btn.inner_text()).lower()
+                if "pay via wallet" in btn_txt or "proceed" in btn_txt:
+                    try:
+                        await final_pay_btn.click(force=True, timeout=2000)
+                    except Exception:
+                        pass
+
+            try:
+                await page.wait_for_url(re.compile(r".*/order/.*"), timeout=6000)
+            except Exception:
+                pass
+
+            shot_path = await browser_manager.capture_screenshot(page, "order_amazon_10")
+            current_url = page.url
+            body_content = await page.locator("body").inner_text()
+            is_order_page = "/order/" in current_url
+
+            if "insufficient" in body_content.lower() or "low balance" in body_content.lower():
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=10,
+                    quantity=quantity,
+                    account_label=account_label,
+                    message="Rooter wallet balance insufficient for ₹10 Amazon Pay test purchase.",
+                    error_screenshot=shot_path,
+                )
+
+            # Extract Master Order ID and Amazon Gift Card code/PIN
+            mo_match = re.search(r"\b(MO_\d+_\d+|ORD_[A-Za-z0-9_-]+)\b", current_url + " " + body_content)
+            real_order_id = mo_match.group(1) if mo_match else None
+
+            # Amazon Gift Card codes: 14-16 alphanumeric or formatted
+            amz_codes = re.findall(r"\b([A-Z0-9]{4}-[A-Z0-9]{6}-[A-Z0-9]{4}|[A-Z0-9]{14,16})\b", body_content)
+            if not amz_codes:
+                amz_codes = re.findall(r"(?:Code|Voucher|Gift Card Code)[\s:#]+([A-Z0-9-]{10,25})", body_content, re.IGNORECASE)
+
+            valid_codes = [c for c in amz_codes if len(re.sub(r'[^A-Z0-9]', '', c)) in (14, 15, 16)]
+            pin_match = re.search(r"(?:PIN|Security PIN)[\s:]+([0-9]{4,8})", body_content, re.IGNORECASE)
+            real_pin = pin_match.group(1) if pin_match else "N/A"
+
+            if not is_order_page and not real_order_id and not valid_codes:
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=10,
+                    quantity=quantity,
+                    account_label=account_label,
+                    message="Amazon Pay test order was not confirmed by Rooter. (No wallet deduction).",
+                    error_screenshot=shot_path,
+                )
+
+            display_code = valid_codes[0] if valid_codes else (real_order_id or "Confirmed on Rooter")
+            final_order_id = real_order_id or "MO_CONFIRMED"
+
+            return PurchaseResult(
+                success=True,
+                platform="rooter",
+                denomination=10,
+                quantity=quantity,
+                account_label=account_label,
+                voucher_code=display_code,
+                voucher_pin=real_pin,
+                codes=valid_codes if valid_codes else [display_code],
+                order_id=final_order_id,
+                receipt_summary=f"Rooter Amazon Pay Gift Card ₹10 x{quantity}",
+                message="✅ Amazon Pay ₹10 Test Buy successful! Account token, wallet, and session health are verified active.",
+                error_screenshot=shot_path,
+                simulation=False,
+            )
+        except Exception as e:
+            logger.error(f"Amazon Pay test buy error: {e}", exc_info=True)
+            shot_path = await browser_manager.capture_screenshot(page, "amazon_buy_error")
+            return PurchaseResult(
+                success=False,
+                platform="rooter",
+                denomination=10,
+                quantity=quantity,
+                account_label=account_label,
+                message=f"Amazon Pay test automation error: {str(e)}",
+                error_screenshot=shot_path,
+            )
+

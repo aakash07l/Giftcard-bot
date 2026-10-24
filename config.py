@@ -1,6 +1,7 @@
 """
 Configuration settings for PlayStation Gift Card Telegram Bot.
 Handles environment variables, platform URLs, denominations, and browser settings.
+Optimized for multi-account concurrency and Railway deployment.
 """
 
 import os
@@ -17,8 +18,10 @@ load_dotenv(dotenv_path=ENV_PATH)
 # Telegram Bot Token
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 if not BOT_TOKEN:
-    # Fallback to provided token if not in environment
     BOT_TOKEN = "8975433711:AAFk_OxMHcTR67JyXsbLwI1l4Ougm69z82I"
+
+# Authorized Admin Chat ID for restricted commands (e.g. /snipe amazon 1)
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
 
 # Simulation / Dry Run mode (safe mode for testing without real card debit)
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False").lower() in ("true", "1", "yes")
@@ -45,30 +48,29 @@ SCREENSHOT_DIR = BASE_DIR / "screenshots"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Rooter Product URLs
+# Product URLs (PlayStation Primary, Amazon Pay for Admin Health-Check)
 ROOTER_PLAYSTATION_URL = "https://shop.rooter.gg/product/playstation-gift-cards"
-ROOTER_GOOGLE_PLAY_URL = "https://shop.rooter.gg/product/google-play-gift-card"
+ROOTER_AMAZON_PAY_URL = "https://shop.rooter.gg/product/amazon-pay-gift-cards"
 
-# Supported Platforms
+# Supported Platforms (PlayStation Only)
 PLATFORMS = {
     "rooter": {
         "name": "Rooter Shop",
         "url": ROOTER_PLAYSTATION_URL,
-        "google_play_url": ROOTER_GOOGLE_PLAY_URL,
+        "amazon_url": ROOTER_AMAZON_PAY_URL,
         "search_query": "PlayStation Gift Cards",
-        "description": "Gaming and PlayStation voucher marketplace",
+        "description": "PlayStation Gift Card Auto-Buyer (₹1k-₹5k)",
         "supported_denominations": [1000, 2000, 3000, 4000, 5000],
     },
 }
 
 DEFAULT_DENOMINATIONS = [1000, 2000, 3000, 4000, 5000]
 
-# Auto-Sniper Restock Refresh Interval in Seconds (Default: 29s)
-SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "29"))
+# Auto-Sniper Restock Refresh Interval in Seconds (Default: 20s for fast restock grab)
+SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "20"))
 
-# Periodic Heartbeat Notifications in Chat (Set to False to avoid spam and save credit)
+# Periodic Heartbeat Notifications in Chat
 ENABLE_SNIPER_HEARTBEAT = os.getenv("ENABLE_SNIPER_HEARTBEAT", "False").lower() in ("true", "1", "yes")
 
-# Resource Optimization: Block images and media in headless browser to minimize RAM/CPU usage on Railway
+# Resource Optimization: Block images/videos in headless browser to minimize RAM/CPU usage on Railway
 BLOCK_MEDIA_RESOURCES = os.getenv("BLOCK_MEDIA_RESOURCES", "True").lower() in ("true", "1", "yes")
-

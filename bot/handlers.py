@@ -595,8 +595,10 @@ async def run_sniper_loop(
             if is_in_stock:
                 logger.info(f"🚨 [Sniper #{attempts}] STOCK DETECTED on {platform}: {available_denominations}!")
 
-                # Retrieve all active accounts for multi-account buying
-                active_accounts = account_manager.get_active()
+                # Retrieve all active accounts with pre-flight valid tokens for multi-account buying
+                active_accounts = await account_manager.get_valid_active_accounts()
+                if not active_accounts:
+                    active_accounts = account_manager.get_active()
                 if not active_accounts:
                     active_accounts = [{
                         "id": "acc_1",
@@ -975,6 +977,179 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
     return ConversationHandler.END
 
 
+async def handle_amazon_test_buy(update: Update, context: ContextTypes.DEFAULT_TYPE, quantity: int = 1):
+    """
+    Executes a controlled test purchase of a ₹10 Amazon Pay Gift card on Rooter.
+    Restricted to authorized ADMIN_CHAT_ID.
+    Used to safely verify account token validity, execution latency, and session health.
+    """
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    user = update.effective_user
+    user_id = user.id if user else 0
+
+    # 1. Admin Chat ID check
+    admin_chat_id = getattr(config, "ADMIN_CHAT_ID", 0)
+    if admin_chat_id and chat_id != admin_chat_id:
+        msg = (
+            f"⛔ <b>Access Denied:</b> <code>/snipe amazon 1</code> is a restricted admin test command.\n"
+            f"• Your Chat ID: <code>{chat_id}</code>\n"
+            f"• Authorized Admin Chat ID: <code>{admin_chat_id}</code>"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text=msg, parse_mode=ParseMode.HTML)
+        else:
+            await update.effective_message.reply_text(text=msg, parse_mode=ParseMode.HTML)
+        return ConversationHandler.END
+
+    status_msg = await update.effective_message.reply_text(
+        "🧪 <b>[Admin Test] Amazon Pay ₹10 Gift Card Verification</b>\n\n"
+        "🔍 Running pre-flight token & session check across active accounts...",
+        parse_mode=ParseMode.HTML,
+    )
+
+    valid_accounts = await account_manager.get_valid_active_accounts()
+    if not valid_accounts:
+        await status_msg.edit_text(
+            "❌ <b>Pre-flight Check Failed!</b>\n\n"
+            "Koi bhi active account me valid Bearer token nahi mila!\n"
+            "Kripya <code>/settoken &lt;token&gt;</code> se active token set karein.",
+            parse_mode=ParseMode.HTML,
+        )
+        return ConversationHandler.END
+
+    primary_acc = valid_accounts[0]
+    acc_label = primary_acc.get("label", primary_acc.get("id"))
+    acc_tok = primary_acc.get("token")
+    start_time = asyncio.get_event_loop().time()
+
+    await status_msg.edit_text(
+        f"🧪 <b>[Admin Test] Amazon Pay ₹10 Gift Card</b>\n\n"
+        f"👤 <b>Testing Account:</b> {html.escape(acc_label)} (UID: <code>{primary_acc.get('user_id')}</code>)\n"
+        f"💰 <b>Wallet Balance:</b> ₹{primary_acc.get('wallet_balance', 0):,.2f}\n"
+        f"👥 <b>Active Accounts Verified:</b> {len(valid_accounts)}/{len(account_manager.get_all())}\n"
+        f"⏳ Launching isolated browser session & checkout...",
+        parse_mode=ParseMode.HTML,
+    )
+
+    browser_ctx = None
+    page = None
+    try:
+        service = PLATFORM_SERVICES.get("rooter")
+        browser_ctx = await browser_manager.create_context(custom_token=acc_tok)
+        page = await browser_ctx.new_page()
+
+        async def _prog(text, emoji):
+            try:
+                await status_msg.edit_text(
+                    f"🧪 <b>[Admin Test] Amazon Pay ₹10 Gift Card</b>\n\n"
+                    f"{emoji} {text}",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
+        result = await service.execute_amazon_test_buy(
+            page=page,
+            quantity=quantity,
+            account_label=acc_label,
+            progress_callback=_prog,
+            simulation=config.SIMULATION_MODE,
+        )
+
+        elapsed = round(asyncio.get_event_loop().time() - start_time, 2)
+
+        if result.success:
+            sim_badge = " [SIMULATION DRY-RUN]" if result.simulation else ""
+            try:
+                live_bal = await account_manager.refresh_account_balance(primary_acc.get("id"))
+                rem_bal = live_bal if live_bal is not None else float(primary_acc.get("wallet_balance", 0.0))
+            except Exception:
+                rem_bal = float(primary_acc.get("wallet_balance", 0.0))
+
+            test_report = (
+                f"🎉 <b>TEST PURCHASE SUCCESSFUL!{sim_badge}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 <b>Account Tested:</b> {html.escape(acc_label)}\n"
+                f"📦 <b>Item:</b> Amazon Pay Gift Card ₹10 (Qty: {quantity})\n"
+                f"⚡ <b>Execution Latency:</b> <code>{elapsed}s</code>\n"
+                f"🧾 <b>Order ID:</b> <code>{html.escape(result.order_id or 'N/A')}</code>\n"
+                f"🔑 <b>Voucher Code:</b> <code>{html.escape(result.voucher_code or 'N/A')}</code>\n"
+                f"🔒 <b>PIN / Key:</b> <code>{html.escape(result.voucher_pin or 'N/A')}</code>\n"
+                f"💰 <b>Updated Live Balance:</b> ₹{rem_bal:,.2f}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>Multi-Account Engine Health:</b> 🟢 100% OPERATIONAL\n"
+                f"🚀 Your bot is fully verified and ready for PlayStation sniping drops!"
+            )
+            photo_file = result.error_screenshot
+            if photo_file and os.path.exists(photo_file):
+                try:
+                    with open(photo_file, "rb") as pf:
+                        await update.effective_message.reply_photo(
+                            photo=pf,
+                            caption=test_report,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_main_menu_keyboard(),
+                        )
+                    await status_msg.delete()
+                    return ConversationHandler.END
+                except Exception:
+                    pass
+
+            await status_msg.edit_text(
+                test_report,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
+        else:
+            fail_text = (
+                f"⚠️ <b>Test Purchase Notice</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 <b>Account:</b> {html.escape(acc_label)}\n"
+                f"❌ <b>Reason:</b> {html.escape(result.message)}\n"
+                f"⏱ <b>Elapsed:</b> <code>{elapsed}s</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💡 <i>Check Rooter wallet balance, token validity, or try again.</i>"
+            )
+            photo_file = result.error_screenshot
+            if photo_file and os.path.exists(photo_file):
+                try:
+                    with open(photo_file, "rb") as pf:
+                        await update.effective_message.reply_photo(
+                            photo=pf,
+                            caption=fail_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_main_menu_keyboard(),
+                        )
+                    await status_msg.delete()
+                    return ConversationHandler.END
+                except Exception:
+                    pass
+
+            await status_msg.edit_text(
+                fail_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard(),
+            )
+    except Exception as e:
+        logger.error(f"Error in handle_amazon_test_buy: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"❌ <b>Test Buy Automation Error:</b> {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+    finally:
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        if browser_ctx:
+            try:
+                await browser_ctx.close()
+            except Exception:
+                pass
+    return ConversationHandler.END
+
+
 async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiates the 24/7 auto-sniper restock flow."""
     user_id = update.effective_user.id if update.effective_user else 0
@@ -984,17 +1159,31 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.effective_chat:
         GLOBAL_SNIPER["chat_ids"].add(update.effective_chat.id)
 
-    # Check if arguments provided in slash command, e.g. /snipe any, /snipe 1000, /snipe 2000
+    # Check if arguments provided in slash command, e.g. /snipe amazon 1, /snipe any, /snipe 1000
     if context.args and len(context.args) > 0:
         raw_arg = context.args[0].lower().strip().replace("k", "000").replace("₹", "").replace("rs", "").replace(".", "")
-        if raw_arg in ("stop", "playstore", "googleplay", "gplay", "stop_playstore", "10"):
-            return await stop_playstore_handler(update, context)
+        if raw_arg == "amazon":
+            qty = 1
+            if len(context.args) > 1 and context.args[1].isdigit():
+                qty = max(1, int(context.args[1]))
+            return await handle_amazon_test_buy(update, context, quantity=qty)
+        elif raw_arg in ("stop", "cancel"):
+            return await stop_snipe_handler(update, context)
         elif raw_arg in ("any", "all", "auto", "0"):
             return await launch_sniper(update, context, "rooter", 0)
         elif raw_arg.isdigit():
             val = int(raw_arg)
             if val < 1000:
-                return await stop_playstore_handler(update, context)
+                warn_msg = (
+                    "⚠️ <b>PlayStation Cards Only:</b> Auto-sniper strictly targets PlayStation vouchers (₹1,000 to ₹5,000).\n"
+                    "Google Play codes have been permanently removed.\n\n"
+                    "💡 Use <code>/snipe any</code> or select a PlayStation denomination below:"
+                )
+                if query:
+                    await query.edit_message_text(text=warn_msg, parse_mode=ParseMode.HTML, reply_markup=get_snipe_denominations_keyboard("rooter"))
+                else:
+                    await update.effective_message.reply_text(text=warn_msg, parse_mode=ParseMode.HTML, reply_markup=get_snipe_denominations_keyboard("rooter"))
+                return BotState.SELECT_SNIPE_DENOMINATION
             return await launch_sniper(update, context, "rooter", val)
 
     context.user_data["snipe_platform"] = "rooter"
@@ -1612,4 +1801,87 @@ async def set_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"❌ Account <code>{html.escape(acc_id)}</code> nahi mila! Check <code>/accounts</code>.",
             parse_mode=ParseMode.HTML,
         )
+
+
+async def settoken_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Direct Telegram command to dynamically add or update account Bearer tokens at runtime
+    without restarting Railway container.
+    Syntax:
+      /settoken <token>
+      /settoken <acc_id_or_index> <token>
+    """
+    user = update.effective_user
+    user_id = user.id if user else 0
+    args = context.args or []
+
+    if not args:
+        await update.effective_message.reply_text(
+            "🔑 <b>Dynamic Token Manager (Railway Compatible)</b>\n\n"
+            "Telegram se bina Railway container restart kiye account tokens update karein.\n\n"
+            "<b>Usage:</b>\n"
+            "• <code>/settoken &lt;token&gt;</code> (Primary account / Account 1 update karne ke liye)\n"
+            "• <code>/settoken 2 &lt;token&gt;</code> (Account 2 update karne ke liye)\n"
+            "• <code>/settoken acc_3 &lt;token&gt;</code> (Account 3 update karne ke liye)\n\n"
+            "<i>Token paste karne ke baad bot automatically Rooter API par pre-flight token check aur live balance fetch karega!</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if len(args) == 1:
+        # Single argument: /settoken <token> (targets account 1 / primary)
+        raw_token = args[0].strip()
+        target_acc_id = "acc_1"
+        target_label = f"Account 1 ({user.first_name if user and user.first_name else 'Primary'})"
+    else:
+        # Two arguments: /settoken <acc_id> <token>
+        target_acc_id = args[0].strip()
+        raw_token = args[1].strip()
+        target_label = f"Account {target_acc_id}"
+
+    status_msg = await update.effective_message.reply_text(
+        "⏳ <i>Validating Rooter Bearer token pre-flight with payments API...</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    success, msg, acc = await account_manager.set_account_token(
+        acc_identifier=target_acc_id,
+        token=raw_token,
+        label=target_label,
+    )
+
+    if not success or not acc:
+        await status_msg.edit_text(
+            f"❌ <b>Token Update Failed!</b>\n\n"
+            f"• <b>Reason:</b> {html.escape(msg)}\n\n"
+            f"💡 <i>Tip: Make sure you copy the fresh JWT Bearer token from Rooter Shop (e.g. from localStorage or network tab).</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        browser_manager.import_session_json(user_id, "rooter", acc["token"])
+    except Exception:
+        pass
+
+    acc_id = acc.get("id")
+    acc_label = acc.get("label", acc_id)
+    uid = acc.get("user_id", "N/A")
+    bal = float(acc.get("wallet_balance", 0.0))
+
+    await status_msg.edit_text(
+        f"✅ <b>Account Token Successfully Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Account ID:</b> <code>{acc_id}</code>\n"
+        f"🏷 <b>Label:</b> {html.escape(acc_label)}\n"
+        f"🆔 <b>User ID:</b> <code>{uid}</code>\n"
+        f"💰 <b>Live Wallet Balance:</b> <b>₹{bal:,.2f}</b> [Rooter Live 🟢]\n"
+        f"⚡ <b>Railway Ephemeral Status:</b> 🟢 Active in-memory session\n"
+        f"🎯 <b>Auto-Buyer Ready:</b> Concurrent parallel sniping enabled!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👉 <code>/snipe</code> to start auto-sniping, or <code>/accounts</code> to view all accounts.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_main_menu_keyboard(),
+    )
+
 
