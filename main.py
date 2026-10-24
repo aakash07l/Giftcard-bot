@@ -3,6 +3,7 @@ Main entry point for PlayStation Gift Card Telegram Bot.
 Builds the Telegram Application, registers conversation handlers, and starts polling.
 """
 
+import os
 import sys
 from pathlib import Path
 
