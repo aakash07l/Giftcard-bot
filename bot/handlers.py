@@ -987,19 +987,21 @@ async def handle_amazon_test_buy(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     user_id = user.id if user else 0
 
-    # 1. Admin Chat ID check
-    admin_chat_id = getattr(config, "ADMIN_CHAT_ID", 0)
-    if admin_chat_id and chat_id != admin_chat_id:
-        msg = (
-            f"⛔ <b>Access Denied:</b> <code>/snipe amazon 1</code> is a restricted admin test command.\n"
-            f"• Your Chat ID: <code>{chat_id}</code>\n"
-            f"• Authorized Admin Chat ID: <code>{admin_chat_id}</code>"
-        )
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, parse_mode=ParseMode.HTML)
-        else:
-            await update.effective_message.reply_text(text=msg, parse_mode=ParseMode.HTML)
-        return ConversationHandler.END
+    # 1. Admin Chat ID check (robust comparison supporting int, str, and comma-separated IDs)
+    raw_admin = str(getattr(config, "ADMIN_CHAT_ID", "")).strip()
+    if raw_admin and raw_admin not in ("0", ""):
+        admin_list = [a.strip() for a in raw_admin.split(",") if a.strip()]
+        if str(chat_id) not in admin_list and str(user_id) not in admin_list:
+            msg = (
+                f"⛔ <b>Access Denied:</b> <code>/snipe amazon 1</code> is a restricted admin test command.\n"
+                f"• Your Chat ID: <code>{chat_id}</code>\n"
+                f"• Authorized Admin Chat ID: <code>{raw_admin}</code>"
+            )
+            if update.callback_query:
+                await update.callback_query.edit_message_text(text=msg, parse_mode=ParseMode.HTML)
+            else:
+                await update.effective_message.reply_text(text=msg, parse_mode=ParseMode.HTML)
+            return ConversationHandler.END
 
     status_msg = await update.effective_message.reply_text(
         "🧪 <b>[Admin Test] Amazon Pay ₹10 Gift Card Verification</b>\n\n"

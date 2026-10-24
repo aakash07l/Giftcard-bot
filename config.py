@@ -21,7 +21,11 @@ if not BOT_TOKEN:
     BOT_TOKEN = "8975433711:AAFk_OxMHcTR67JyXsbLwI1l4Ougm69z82I"
 
 # Authorized Admin Chat ID for restricted commands (e.g. /snipe amazon 1)
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
+_raw_admin_id = os.getenv("ADMIN_CHAT_ID", "").strip()
+try:
+    ADMIN_CHAT_ID = int(_raw_admin_id) if _raw_admin_id else 0
+except (ValueError, TypeError):
+    ADMIN_CHAT_ID = 0
 
 # Simulation / Dry Run mode (safe mode for testing without real card debit)
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False").lower() in ("true", "1", "yes")
