@@ -254,7 +254,7 @@ async def index_handler(request: web.Request) -> web.Response:
             </div>
             <div class="card stat-card">
                 <h3>Sniper Refresh Rate</h3>
-                <div class="val">{config.SNIPE_INTERVAL_SECONDS}s</div>
+                <div class="val">{config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s</div>
             </div>
         </div>
 

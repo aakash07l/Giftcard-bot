@@ -6,6 +6,7 @@ Supports environment credentials (ROOTER_AUTH_TOKEN) and interactive flows.
 
 import os
 import html
+import random
 import asyncio
 import logging
 from typing import Dict, Any, Optional
@@ -135,7 +136,7 @@ def format_status_text(user_id: int) -> str:
         f"• <b>24/7 Restock Sniper:</b> {sniper_text}\n"
         f"• <b>Active Accounts:</b> {rooter_logged}\n"
         f"• <b>Total Balance:</b> <b>₹{total_bal:,.0f}</b>\n"
-        f"• <b>Refresh Interval:</b> <code>{config.SNIPE_INTERVAL_SECONDS}s</code>\n"
+        f"• <b>Refresh Interval:</b> <code>{config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s</code>\n"
         f"• <b>Environment:</b> <code>{config.ENV}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Use the buttons below to manage accounts, instant buy, or start 24/7 auto-sniper."
@@ -195,7 +196,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Add your 5 to 10 Rooter accounts with <code>/addaccount</code> or the 👥 button.\n"
         "2. Balance is automatically fetched in real-time from Rooter's live API.\n"
         "3. Send <code>/snipe</code> -> select <b>Any PlayStation Card</b>.\n"
-        f"4. Bot checks stock every {config.SNIPE_INTERVAL_SECONDS}s. When stock lands, bot automatically picks the largest affordable denomination for each account and buys in parallel simultaneously!"
+        f"4. Bot checks stock every {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s. When stock lands, bot automatically picks the largest affordable denomination for each account and buys in parallel simultaneously!"
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -593,7 +594,7 @@ async def run_sniper_loop(
                         bot,
                         text=(
                             f"ℹ️ <b>Stock Status:</b> {status_desc} abhi Rooter par <b>Out of Stock</b> hai.\n"
-                            f"🔄 <i>Monitoring actively every {config.SNIPE_INTERVAL_SECONDS}s. Jaise hi restock hoga, turant buy kar lega!</i>"
+                            f"🔄 <i>Monitoring actively every {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s. Jaise hi restock hoga, turant buy kar lega!</i>"
                         ),
                     )
                 except Exception:
@@ -802,7 +803,7 @@ async def run_sniper_loop(
                             f"• <b>Platform:</b> {plat_name}\n"
                             f"• <b>Target:</b> PlayStation ₹{denomination:,}\n"
                             f"• <b>Refreshes Completed:</b> <code>{attempts}</code>\n"
-                            f"• <b>Status:</b> Actively checking every {config.SNIPE_INTERVAL_SECONDS}s. Ready to buy instantly when stock arrives!\n"
+                            f"• <b>Status:</b> Actively checking every {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s. Ready to buy instantly when stock arrives!\n"
                             f"━━━━━━━━━━━━━━━━━━━━━━"
                         ),
                         reply_markup=get_stop_snipe_keyboard(),
@@ -821,7 +822,9 @@ async def run_sniper_loop(
 
             # Wait before next check (interrupted immediately if stop_event is set)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=float(config.SNIPE_INTERVAL_SECONDS))
+                sleep_sec = random.uniform(config.SNIPE_INTERVAL_MIN, config.SNIPE_INTERVAL_MAX)
+                logger.info(f"Auto-sniper waiting {sleep_sec:.1f}s before next stock check...")
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_sec)
                 # If wait_for returns without TimeoutError, stop_event was signaled
                 break
             except asyncio.TimeoutError:
@@ -905,7 +908,7 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Target:</b> {target_name}\n"
             f"• <b>Total Checks:</b> <code>{checks}</code>\n"
-            f"• <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_SECONDS}s\n"
+            f"• <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s\n"
             f"• <b>Subscribed Chats:</b> <code>{len(GLOBAL_SNIPER['chat_ids'])}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"👥 <b>Aapka Telegram chat alert list me include ho gaya hai!</b>\n"
@@ -962,7 +965,7 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Platform:</b> {plat_name}\n"
         f"💰 <b>Target Voucher:</b> {prod_name}\n"
-        f"⏱️ <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_SECONDS} seconds\n"
+        f"⏱️ <b>Refresh Rate:</b> Every {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX} seconds\n"
         f"⚡ <b>Mode:</b> <code>{mode_text}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{note_text}\n\n"
@@ -1206,7 +1209,7 @@ async def snipe_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     msg = (
         "🎯 <b>Auto-Sniper / Restock Monitor (Rooter Shop)</b>\n\n"
-        f"Bot har {config.SNIPE_INTERVAL_SECONDS}s me stock check karega aur jaise hi available hoga, wallet balance se turant instant-buy kar lega!\n\n"
+        f"Bot har {config.SNIPE_INTERVAL_MIN}-{config.SNIPE_INTERVAL_MAX}s me stock check karega aur jaise hi available hoga, wallet balance se turant instant-buy kar lega!\n\n"
         f"<b>Select Voucher Denomination:</b>\n"
         f"<i>(⚡ <b>Any PlayStation Card</b> select karne se ₹1k, ₹2k, ₹3k, ₹5k me jo bhi pehle aayega turant buy ho jayega!)</i>{login_note}"
     )

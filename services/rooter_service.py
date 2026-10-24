@@ -232,11 +232,13 @@ class RooterService(BasePlatform):
             # Highest to lowest priority: ₹5,000 down to ₹1,000
             supported = [5000, 4000, 3000, 2000, 1000]
             for d in supported:
-                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
-                    has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)
+                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='mantine-Chip-root']").filter(
+                    has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)
                 ).first
                 if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE)).last
+                    denom_opt = page.locator("label").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)).first
+                if await denom_opt.count() == 0:
+                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)).last
 
                 if await denom_opt.count() > 0:
                     chip_text = (await denom_opt.inner_text()).lower()
@@ -386,13 +388,13 @@ class RooterService(BasePlatform):
             await self.dismiss_location_popup(page)
 
             # 1. Select the specific PlayStation denomination
-            denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']").filter(
-                has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)
+            denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='mantine-Chip-root']").filter(
+                has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{denomination}\b", re.IGNORECASE)
             ).first
             if await denom_opt.count() == 0:
-                denom_opt = page.locator("label").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
+                denom_opt = page.locator("label").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{denomination}\b", re.IGNORECASE)).first
             if await denom_opt.count() == 0:
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE)).first
+                denom_opt = page.locator("div").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{denomination}\b", re.IGNORECASE)).first
 
             if await denom_opt.count() > 0:
                 chip_text = (await denom_opt.inner_text()).lower()
@@ -487,12 +489,13 @@ class RooterService(BasePlatform):
             if progress_callback:
                 await progress_callback(f"Clicking Buy / Pay on {prod_name}...", "🛒")
 
-            # Click the main page checkout button (supports proceed-to-pay, add-address-btn, Pay ₹, etc.)
+            # Click the main page checkout button (supports dynamic cart prices, discounts, fees)
             buy_btn_selector = (
                 "button[data-testid='proceed-to-pay'], button[testid='proceed-to-pay'], "
                 "button[data-testid='add-address-btn'], button[testid='add-address-btn'], "
-                "button.styles_paymentBtn__TiXtN, button:has-text('Pay ₹'), button:has-text('Proceed to Pay'), "
-                "button:has-text('Pay via wallet'), button:has-text('Buy Now')"
+                "button.styles_paymentBtn__TiXtN, "
+                "button:has-text('Pay'), button:has-text('Proceed to Pay'), "
+                "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Proceed')"
             )
 
             # Fast retry loop to click main button as soon as React enables it
@@ -500,10 +503,16 @@ class RooterService(BasePlatform):
             for _ in range(15):
                 buy_btn = page.locator(buy_btn_selector).first
                 if await buy_btn.is_visible(timeout=500):
-                    btn_text = (await buy_btn.inner_text()).lower()
-                    if "out of stock" in btn_text:
+                    btn_text = (await buy_btn.inner_text()).strip().replace("\n", " ")
+                    if "out of stock" in btn_text.lower():
                         await page.wait_for_timeout(200)
                         continue
+                    logger.info(
+                        f"[{prod_name}] Selected denomination: ₹{denomination:,}. "
+                        f"Checkout button: '{btn_text}' (paying whatever final amount/discount/fee is displayed)."
+                    )
+                    if progress_callback:
+                        await progress_callback(f"Proceeding to pay {btn_text} (Card Value: ₹{denomination:,})...", "💳")
                     try:
                         await buy_btn.click(force=True, timeout=2000)
                         main_clicked = True
@@ -846,19 +855,25 @@ class RooterService(BasePlatform):
             buy_btn_selector = (
                 "button[data-testid='proceed-to-pay'], button[testid='proceed-to-pay'], "
                 "button[data-testid='add-address-btn'], button[testid='add-address-btn'], "
-                "button.styles_paymentBtn__TiXtN, button:has-text('Pay ₹9.92'), button:has-text('Pay 9.92'), "
-                "button:has-text('Pay ₹'), button:has-text('Pay ?'), button:has-text('Proceed to Pay'), "
-                "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Pay')"
+                "button.styles_paymentBtn__TiXtN, "
+                "button:has-text('Pay'), button:has-text('Proceed to Pay'), "
+                "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Proceed')"
             )
 
             main_clicked = False
             for _ in range(15):
                 buy_btn = page.locator(buy_btn_selector).first
                 if await buy_btn.is_visible(timeout=500):
-                    btn_text = (await buy_btn.inner_text()).lower()
-                    if "out of stock" in btn_text:
+                    btn_text = (await buy_btn.inner_text()).strip().replace("\n", " ")
+                    if "out of stock" in btn_text.lower():
                         await page.wait_for_timeout(200)
                         continue
+                    logger.info(
+                        f"[Amazon Test Buy] Selected denomination: ₹10. "
+                        f"Checkout button: '{btn_text}' (paying actual amount including discounts/fees, e.g. ₹9.92)."
+                    )
+                    if progress_callback:
+                        await progress_callback(f"Proceeding to pay {btn_text} (Card Value: ₹10)...", "💳")
                     try:
                         await buy_btn.click(force=True, timeout=2000)
                         main_clicked = True

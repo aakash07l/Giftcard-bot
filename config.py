@@ -70,11 +70,13 @@ PLATFORMS = {
 
 DEFAULT_DENOMINATIONS = [1000, 2000, 3000, 4000, 5000]
 
-# Auto-Sniper Restock Refresh Interval in Seconds (Default: 20s for fast restock grab)
-SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "20"))
+# Auto-Sniper Restock Refresh Interval in Seconds (Configured to 20s - 29s)
+SNIPE_INTERVAL_MIN = int(os.getenv("SNIPE_INTERVAL_MIN", "20"))
+SNIPE_INTERVAL_MAX = int(os.getenv("SNIPE_INTERVAL_MAX", "29"))
+SNIPE_INTERVAL_SECONDS = int(os.getenv("SNIPE_INTERVAL_SECONDS", "24"))
 
 # Periodic Heartbeat Notifications in Chat
 ENABLE_SNIPER_HEARTBEAT = os.getenv("ENABLE_SNIPER_HEARTBEAT", "False").lower() in ("true", "1", "yes")
 
-# Resource Optimization: Block images/videos in headless browser to minimize RAM/CPU usage on Railway
-BLOCK_MEDIA_RESOURCES = os.getenv("BLOCK_MEDIA_RESOURCES", "True").lower() in ("true", "1", "yes")
+# Resource Optimization: Full media/images enabled for Railway Hobby 8GB RAM plan
+BLOCK_MEDIA_RESOURCES = os.getenv("BLOCK_MEDIA_RESOURCES", "False").lower() in ("true", "1", "yes")
