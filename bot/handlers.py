@@ -1887,3 +1887,75 @@ async def settoken_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to view recent application logs in Telegram."""
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    raw_admin = str(getattr(config, "ADMIN_CHAT_ID", "")).strip()
+    if raw_admin and raw_admin not in ("0", ""):
+        admin_list = [a.strip() for a in raw_admin.split(",") if a.strip()]
+        if str(chat_id) not in admin_list:
+            await update.effective_message.reply_text("⛔ Restricted to bot administrator.")
+            return
+
+    from services.web_dashboard import LOG_BUFFER
+    if not LOG_BUFFER:
+        await update.effective_message.reply_text("ℹ️ Log buffer is currently empty.")
+        return
+
+    recent_lines = list(LOG_BUFFER)[-25:]
+    snippet = "\n".join(recent_lines)
+    if len(snippet) > 3800:
+        snippet = snippet[-3800:]
+
+    domain_hint = "\n\n🌐 <i>Full live logs & dashboard available on your Railway domain (e.g. <code>https://&lt;your-app&gt;.up.railway.app/</code>)</i>"
+    await update.effective_message.reply_text(
+        f"📋 <b>Recent Container Logs:</b>\n<pre>{html.escape(snippet)}</pre>{domain_hint}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to take a live screenshot of Rooter Shop and send to Telegram."""
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    raw_admin = str(getattr(config, "ADMIN_CHAT_ID", "")).strip()
+    if raw_admin and raw_admin not in ("0", ""):
+        admin_list = [a.strip() for a in raw_admin.split(",") if a.strip()]
+        if str(chat_id) not in admin_list:
+            await update.effective_message.reply_text("⛔ Restricted to bot administrator.")
+            return
+
+    status_msg = await update.effective_message.reply_text("📸 <i>Capturing live browser view of Rooter Shop...</i>", parse_mode=ParseMode.HTML)
+    browser_ctx = None
+    page = None
+    try:
+        browser_ctx = await browser_manager.create_context()
+        page = await browser_ctx.new_page()
+        await page.goto(config.ROOTER_PLAYSTATION_URL, wait_until="domcontentloaded", timeout=config.BROWSER_TIMEOUT_MS)
+        await page.wait_for_timeout(2000)
+        shot_path = await browser_manager.capture_screenshot(page, "manual_screen")
+        if shot_path and os.path.exists(shot_path):
+            with open(shot_path, "rb") as f:
+                await update.effective_message.reply_photo(
+                    photo=f,
+                    caption=f"📸 <b>Live Browser Screenshot</b>\n• URL: <code>{html.escape(page.url)}</code>\n• Title: <code>{html.escape(await page.title())}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Failed to capture screenshot.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error capturing screenshot: {html.escape(str(e))}")
+    finally:
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        if browser_ctx:
+            try:
+                await browser_ctx.close()
+            except Exception:
+                pass
+
+
+

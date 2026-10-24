@@ -258,22 +258,34 @@ class BrowserManager:
                     localStorage.setItem('token', '{active_token}');
                     localStorage.setItem('authToken', '{active_token}');
                     localStorage.setItem('auth_token', '{active_token}');
+                    localStorage.setItem('country', 'IN');
+                    localStorage.setItem('COUNTRY', 'IN');
+                    localStorage.setItem('currency', 'INR');
                     document.cookie = "user_auth=" + encodeURIComponent('{escaped_json}') + "; path=/; domain=.rooter.gg";
                     document.cookie = "token={active_token}; path=/; domain=.rooter.gg";
+                    document.cookie = "COUNTRY=IN; path=/; domain=.rooter.gg";
+                    document.cookie = "country=IN; path=/; domain=.rooter.gg";
+                    document.cookie = "currency=INR; path=/; domain=.rooter.gg";
                 }} catch (e) {{}}
             """
 
         await context.add_init_script(init_script)
 
-        # Inject clean alphanumeric auth cookies for Rooter HTTP requests (avoids CloudFront WAF 403 on illegal JSON headers)
-        if platform == "rooter" and active_token:
+        # Inject clean alphanumeric auth cookies and India store cookies (bypasses location popup & CloudFront WAF)
+        if platform == "rooter":
             try:
-                await context.clear_cookies()
-                await context.add_cookies([
-                    {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                    {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
-                ])
+                cookies_to_add = [
+                    {"name": "COUNTRY", "value": "IN", "domain": ".rooter.gg", "path": "/"},
+                    {"name": "country", "value": "IN", "domain": ".rooter.gg", "path": "/"},
+                    {"name": "currency", "value": "INR", "domain": ".rooter.gg", "path": "/"},
+                ]
+                if active_token:
+                    cookies_to_add.extend([
+                        {"name": "token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                        {"name": "authToken", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                        {"name": "rooter_token", "value": active_token, "domain": ".rooter.gg", "path": "/"},
+                    ])
+                await context.add_cookies(cookies_to_add)
             except Exception as e:
                 logger.warning(f"Failed to inject Rooter cookies: {e}")
 
@@ -369,8 +381,14 @@ class BrowserManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{name_prefix}_{timestamp}.png"
         filepath = config.SCREENSHOT_DIR / filename
+        latest_path = config.SCREENSHOT_DIR / "latest.png"
         try:
+            config.SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
             await page.screenshot(path=str(filepath), full_page=False)
+            try:
+                await page.screenshot(path=str(latest_path), full_page=False)
+            except Exception:
+                pass
             return str(filepath)
         except Exception as e:
             logger.warning(f"Could not take screenshot: {e}")

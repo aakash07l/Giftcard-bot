@@ -64,8 +64,11 @@ from bot.handlers import (
     set_balance_command,
     settoken_command,
     stop_playstore_handler,
+    logs_command,
+    screenshot_command,
 )
 from services.browser_manager import browser_manager
+from services.web_dashboard import setup_log_capture, start_web_dashboard, stop_web_dashboard
 
 # Configure logging
 logging.basicConfig(
@@ -80,7 +83,21 @@ def build_application():
         logger.error("FATAL: BOT_TOKEN is not configured! Please set BOT_TOKEN in .env")
         sys.exit(1)
 
-    app = ApplicationBuilder().token(config.BOT_TOKEN).build()
+    async def post_init(application):
+        port = int(os.getenv("PORT", "8080"))
+        await start_web_dashboard(port=port)
+
+    async def post_shutdown(application):
+        await stop_web_dashboard()
+        await browser_manager.close()
+
+    app = (
+        ApplicationBuilder()
+        .token(config.BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
     # 1. Buy Flow Conversation Handler
     buy_conversation = ConversationHandler(
@@ -207,6 +224,10 @@ def build_application():
     app.add_handler(CommandHandler("stop_playstore", stop_playstore_handler))
     app.add_handler(CommandHandler("psonly", stop_playstore_handler))
     app.add_handler(CommandHandler("toggle_sim", toggle_sim_handler))
+    app.add_handler(CommandHandler("logs", logs_command))
+    app.add_handler(CommandHandler("log", logs_command))
+    app.add_handler(CommandHandler("screenshot", screenshot_command))
+    app.add_handler(CommandHandler("screen", screenshot_command))
     app.add_handler(CommandHandler("cancel", cancel_flow))
 
     # Register navigation callbacks
@@ -238,6 +259,7 @@ def build_application():
 
 def main():
     """Starts the Telegram bot polling service."""
+    setup_log_capture()
     logger.info("Initializing PlayStation Gift Card Telegram Bot...")
     logger.info(f"Simulation Mode: {config.SIMULATION_MODE}")
     logger.info(f"Headless Browser: {config.HEADLESS}")

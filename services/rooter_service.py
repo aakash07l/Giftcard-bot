@@ -179,13 +179,27 @@ class RooterService(BasePlatform):
         return cards
 
     async def dismiss_location_popup(self, page: Page):
-        """Auto-dismisses 'Different Location Detected' modal by clicking 'No, stay on this site'."""
+        """Auto-dismisses 'Different Location Detected' modal by clicking 'No, stay on this site' or close."""
         try:
-            stay_btn = page.locator("button:has-text('stay on this site'), button:has-text('No, stay on this site'), button:has-text('Stay on this site')").first
-            if await stay_btn.is_visible(timeout=800):
-                await stay_btn.click(force=True, timeout=1000)
-                logger.info("[Rooter] Clicked 'No, stay on this site' on Different Location modal.")
-                await page.wait_for_timeout(300)
+            btn_selectors = [
+                "button:has-text('stay on this site')",
+                "button:has-text('No, stay on this site')",
+                "button:has-text('Stay on this site')",
+                "button:has-text('Stay')",
+                "button:has-text('stay')",
+                ".mantine-Modal-content button:has-text('stay')",
+                ".mantine-Modal-content button:has-text('Stay')",
+                ".mantine-Modal-close",
+                "button[aria-label='Close modal']",
+                "button[aria-label*='Close']",
+            ]
+            for sel in btn_selectors:
+                btn = page.locator(sel).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click(force=True, timeout=1000)
+                    logger.info(f"[Rooter] Dismissed location popup using selector: {sel}")
+                    await page.wait_for_timeout(300)
+                    break
         except Exception:
             pass
 
@@ -697,43 +711,73 @@ class RooterService(BasePlatform):
             await self.dismiss_location_popup(page)
 
             try:
-                await page.wait_for_selector("div[class*='chipWrapper'], div[class*='styles_chipRoot']", timeout=8000)
+                await page.wait_for_selector(
+                    "div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='chip'], label:has-text('10')",
+                    timeout=10000,
+                )
             except Exception:
                 pass
 
             await self.dismiss_location_popup(page)
 
-            # Select the ₹10 denomination chip
-            chips = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot']")
-            count = await chips.count()
+            # Search for the ₹10 denomination chip with multiple attempts to allow React hydration
             chip_selected = False
-            for i in range(count):
-                txt = await chips.nth(i).inner_text()
-                # Check for 10 chip (exclude 100, 1000, 10000)
-                if "10" in txt and "100" not in txt and "1000" not in txt and "10000" not in txt:
-                    if "out of stock" in txt.lower() or "sold out" in txt.lower():
-                        return PurchaseResult(
-                            success=False,
-                            platform="rooter",
-                            denomination=10,
-                            quantity=quantity,
-                            account_label=account_label,
-                            message="Amazon Pay ₹10 Gift Card is currently Out of Stock on Rooter Shop.",
-                        )
-                    label_or_chip = chips.nth(i).locator("label").first if await chips.nth(i).locator("label").count() > 0 else chips.nth(i)
-                    await label_or_chip.click(force=True, timeout=1500)
-                    await page.wait_for_timeout(350)
-                    chip_selected = True
+            for attempt in range(1, 6):
+                await self.dismiss_location_popup(page)
+                chips = page.locator(
+                    "div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='chip'], div[data-testid*='chip']"
+                )
+                count = await chips.count()
+                logger.info(f"[Amazon Test Buy] Attempt {attempt}/5: Found {count} chips on page.")
+
+                if count > 0:
+                    for i in range(count):
+                        txt = await chips.nth(i).inner_text()
+                        clean_txt = txt.replace("₹", "").replace("Rs.", "").strip()
+                        has_10 = bool(re.search(r"\b10\b", clean_txt) or "9.92" in clean_txt)
+                        has_large = any(x in clean_txt for x in ["100", "1000", "2500", "5000", "10000"])
+
+                        if has_10 and not has_large:
+                            if "out of stock" in txt.lower() or "sold out" in txt.lower():
+                                shot_path = await browser_manager.capture_screenshot(page, "amazon_10_oos")
+                                return PurchaseResult(
+                                    success=False,
+                                    platform="rooter",
+                                    denomination=10,
+                                    quantity=quantity,
+                                    account_label=account_label,
+                                    message="Amazon Pay ₹10 Gift Card is currently Out of Stock on Rooter Shop.",
+                                    error_screenshot=shot_path,
+                                )
+
+                            label_or_chip = chips.nth(i).locator("label").first if await chips.nth(i).locator("label").count() > 0 else chips.nth(i)
+                            try:
+                                await label_or_chip.click(force=True, timeout=2000)
+                            except Exception:
+                                await chips.nth(i).dispatch_event("click")
+                            await page.wait_for_timeout(400)
+                            chip_selected = True
+                            logger.info(f"[Amazon Test Buy] Selected ₹10 chip at index {i} (text: {repr(txt[:30])})")
+                            break
+
+                if chip_selected:
                     break
 
+                await page.wait_for_timeout(1000)
+
             if not chip_selected:
+                shot_path = await browser_manager.capture_screenshot(page, "amazon_chip_not_found")
+                page_title = await page.title()
+                current_url = page.url
+                logger.warning(f"[Amazon Test Buy] Chip not found! URL: {current_url}, Title: {page_title}, Screenshot: {shot_path}")
                 return PurchaseResult(
                     success=False,
                     platform="rooter",
                     denomination=10,
                     quantity=quantity,
                     account_label=account_label,
-                    message="Could not locate ₹10 Amazon Pay Gift Card chip on Rooter Shop.",
+                    message=f"Could not locate ₹10 Amazon Pay chip on Rooter Shop (URL: {current_url}, Title: {page_title}). See screenshot.",
+                    error_screenshot=shot_path,
                 )
 
             # Handle Simulation Mode
