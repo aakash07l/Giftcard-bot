@@ -447,6 +447,13 @@ class RooterService(BasePlatform):
                         await denom_opt.dispatch_event("click")
                     except Exception:
                         pass
+
+                # Ensure radio input is actively checked
+                try:
+                    if await radio_inp.count() > 0 and not await radio_inp.is_checked():
+                        await radio_inp.check(force=True)
+                except Exception:
+                    pass
                 await page.wait_for_timeout(350)
 
                 # Early out-of-stock check on bottom button to avoid needless 10s wait
@@ -533,13 +540,30 @@ class RooterService(BasePlatform):
 
             # Fast retry loop to click main button as soon as React enables it
             main_clicked = False
-            for _ in range(15):
+            for retry_i in range(15):
                 buy_btn = page.locator(buy_btn_selector).first
                 if await buy_btn.is_visible(timeout=500):
                     btn_text = (await buy_btn.inner_text()).strip().replace("\n", " ")
                     if "out of stock" in btn_text.lower():
                         await page.wait_for_timeout(200)
                         continue
+
+                    # Safety Guard: Ensure button amount is not displaying an old/lower denomination (e.g. ₹1,137 for a ₹4,000 card)
+                    # If button text shows an amount significantly lower than requested denomination, wait for React to recalculate
+                    amt_match = re.search(r"[₹Rs\.]*\s*([\d,]+)", btn_text)
+                    if amt_match and retry_i < 10:
+                        try:
+                            parsed_amt = int(amt_match.group(1).replace(",", ""))
+                            if parsed_amt > 0 and parsed_amt < int(denomination * 0.6):
+                                logger.info(
+                                    f"[{prod_name}] Button text '{btn_text}' is still updating to ₹{denomination:,} "
+                                    f"(parsed ₹{parsed_amt:,} < ₹{int(denomination * 0.6):,}). Waiting for React cart recalculation..."
+                                )
+                                await page.wait_for_timeout(300)
+                                continue
+                        except Exception:
+                            pass
+
                     logger.info(
                         f"[{prod_name}] Selected denomination: ₹{denomination:,}. "
                         f"Checkout button: '{btn_text}' (paying whatever final amount/discount/fee is displayed)."
