@@ -559,45 +559,21 @@ class RooterService(BasePlatform):
                         break
                 await page.wait_for_timeout(100)
 
-            # Wait briefly for Delivery Details modal or payment drawer
-            delivery_modal = page.locator("div[role='dialog'], .mantine-Modal-content").filter(has_text=re.compile(r"delivery details|shipping|name", re.IGNORECASE)).last
+            # Allow animation for Delivery Details modal or payment drawer
+            await page.wait_for_timeout(2000)
+
+            delivery_modal = page.locator("div[role='dialog'], .mantine-Modal-content").filter(has_text="Delivery Details").last
             try:
                 await delivery_modal.wait_for(state="visible", timeout=3000)
             except Exception:
                 pass
 
-            # If Delivery Details modal appeared, fill missing inputs so form validation passes
             if await delivery_modal.is_visible():
-                try:
-                    name_inp = delivery_modal.locator("input[placeholder*='name'], input[placeholder*='Name']").first
-                    if await name_inp.is_visible(timeout=400):
-                        val = await name_inp.input_value()
-                        if not val:
-                            await name_inp.fill("Gamer")
-                    email_inp = delivery_modal.locator("input[placeholder*='Email'], input[placeholder*='email']").first
-                    if await email_inp.is_visible(timeout=400):
-                        val = await email_inp.input_value()
-                        if not val:
-                            await email_inp.fill("rooter.gamer@gmail.com")
-                except Exception:
-                    pass
-
-                # Click submit / Pay via wallet inside Delivery Details modal
-                modal_btn_selector = (
-                    ".mantine-Modal-content button:has-text('Pay via wallet'), "
-                    ".mantine-Modal-content button:has-text('Pay ₹'), "
-                    ".mantine-Modal-content button:has-text('Proceed to Pay'), "
-                    ".mantine-Modal-content button:has-text('Proceed'), "
-                    ".mantine-Modal-content button[type='submit'], "
-                    "div[role='dialog'] button:has-text('Pay via wallet'), "
-                    "div[role='dialog'] button:has-text('Pay ₹'), "
-                    "div[role='dialog'] button[type='submit']"
-                )
-                modal_pay_btn = page.locator(modal_btn_selector).last
+                modal_pay_btn = delivery_modal.locator("button:has-text('Pay'), button:has-text('Proceed'), button[type='submit']").last
                 if await modal_pay_btn.is_visible(timeout=2500):
                     if progress_callback:
                         await progress_callback("Confirming Delivery Details & submitting order...", "📝")
-                    logger.info("[Rooter] Clicking Pay via wallet / Proceed inside modal...")
+                    logger.info("[Rooter] Clicking Pay / Proceed inside Delivery Details modal...")
                     try:
                         await modal_pay_btn.click(force=True, timeout=2500)
                     except Exception:
@@ -605,11 +581,11 @@ class RooterService(BasePlatform):
                             await modal_pay_btn.dispatch_event("click")
                         except Exception:
                             pass
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(2500)
 
             # Close coupon or offer popup if shown
             offers_dialog = page.locator("div[role='dialog']:has-text('Offers'), .mantine-Modal-content:has-text('Offers')").first
-            if await offers_dialog.is_visible(timeout=1000):
+            if await offers_dialog.is_visible(timeout=800):
                 close_btn = offers_dialog.locator("button[aria-label*='Close'], svg, button:has-text('Skip')").first
                 if await close_btn.is_visible(timeout=800):
                     try:
@@ -618,31 +594,44 @@ class RooterService(BasePlatform):
                     except Exception:
                         pass
 
-            # If the page still has final 'Pay via wallet' button active, click it
-            final_pay_btn = page.locator("button[data-testid='add-address-btn'], button[data-testid='proceed-to-pay'], button:has-text('Pay via wallet')").first
-            if await final_pay_btn.is_visible(timeout=1000):
-                btn_txt = (await final_pay_btn.inner_text()).lower()
-                if "pay via wallet" in btn_txt or "proceed" in btn_txt:
-                    try:
-                        await final_pay_btn.click(force=True, timeout=2000)
-                    except Exception:
-                        pass
+            # Wait for transition to /payments or /order/
+            try:
+                await page.wait_for_url(re.compile(r".*/(payments|order)/.*"), timeout=6000)
+            except Exception:
+                pass
 
-            # If redirected to /payments, ensure Rooter Shopping Card / Wallet is selected and click final Pay
+            # If redirected to /payments, select Rooter Shopping Card / Wallet and click final Pay
             if "/payments" in page.url:
+                logger.info("[Rooter] Redirected to Payments page, confirming Rooter Shopping Card / Wallet...")
                 try:
-                    wallet_opt = page.locator("div:has-text('Rooter Shopping Card'), div:has-text('Wallet')").first
-                    if await wallet_opt.is_visible(timeout=1000):
-                        await wallet_opt.click(force=True, timeout=1000)
-                    pay_now_btn = page.locator("button:has-text('Pay'), button:has-text('Proceed')").last
-                    if await pay_now_btn.is_visible(timeout=1000):
-                        await pay_now_btn.click(force=True, timeout=2000)
+                    await page.wait_for_selector("div:has-text('Shopping Card'), div:has-text('Wallet'), button:has-text('Pay')", timeout=3500)
                 except Exception:
                     pass
 
-            # Wait up to 6s for Rooter to process payment and navigate to order confirmation page
+                wallet_opt = page.locator("div:has-text('Rooter Shopping Card'), div:has-text('Shopping Card'), div:has-text('Wallet')").first
+                if await wallet_opt.is_visible(timeout=1500):
+                    try:
+                        await wallet_opt.click(force=True, timeout=1000)
+                        await page.wait_for_timeout(300)
+                    except Exception:
+                        pass
+
+                pay_now_btn = page.locator("button:has-text('Pay'), button:has-text('Proceed')").last
+                if await pay_now_btn.is_visible(timeout=2500):
+                    btn_pay_txt = (await pay_now_btn.inner_text()).strip()
+                    logger.info(f"[Rooter] Clicking final payment button on /payments: '{btn_pay_txt}'")
+                    try:
+                        await pay_now_btn.click(force=True, timeout=2500)
+                    except Exception:
+                        try:
+                            await pay_now_btn.dispatch_event("click")
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(2000)
+
+            # Wait up to 8s for Rooter to process payment and navigate to order confirmation page
             try:
-                await page.wait_for_url(re.compile(r".*/order/.*"), timeout=6000)
+                await page.wait_for_url(re.compile(r".*/order/.*"), timeout=8000)
             except Exception:
                 pass
 
