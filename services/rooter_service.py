@@ -179,16 +179,30 @@ class RooterService(BasePlatform):
         return cards
 
     async def dismiss_location_popup(self, page: Page):
-        """Auto-dismisses 'Different Location Detected' modal by clicking 'No, stay on this site' or close."""
+        """Auto-dismisses 'Different Location Detected' modal by clicking 'No, stay on this site' and setting session preference."""
         try:
+            # 1. Immediately inject session preference and click 'No, stay on this site' via DOM
+            await page.evaluate("""() => {
+                try {
+                    sessionStorage.setItem('region-switch-stay-preference', 'true');
+                    localStorage.setItem('region-switch-stay-preference', 'true');
+                    const all = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+                    const stay = all.find(b => (b.innerText || '').toLowerCase().includes('stay on this site'));
+                    if (stay) {
+                        stay.click();
+                    }
+                } catch(e) {}
+            }""")
+
+            # 2. Playwright locators for 'No, stay on this site'
             btn_selectors = [
-                "button:has-text('stay on this site')",
                 "button:has-text('No, stay on this site')",
+                "button:has-text('stay on this site')",
                 "button:has-text('Stay on this site')",
-                "button:has-text('Stay')",
-                "button:has-text('stay')",
+                "div[id*='region-switch'] button:has-text('stay')",
                 ".mantine-Modal-content button:has-text('stay')",
-                ".mantine-Modal-content button:has-text('Stay')",
+                "div[role='dialog']:has-text('Different Location') button:has-text('stay')",
+                "button:has-text('Stay')",
                 ".mantine-Modal-close",
                 "button[aria-label='Close modal']",
                 "button[aria-label*='Close']",
@@ -232,47 +246,55 @@ class RooterService(BasePlatform):
             # Highest to lowest priority: ₹5,000 down to ₹1,000
             supported = [5000, 4000, 3000, 2000, 1000]
             for d in supported:
-                denom_opt = page.locator("div[class*='chipWrapper'], div[class*='styles_chipRoot'], div[class*='mantine-Chip-root']").filter(
+                denom_opt = page.locator("div.styles_root__6O3V0, div.styles_chipRoot__zkrmI, div.mantine-Chip-root").filter(
                     has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)
                 ).first
                 if await denom_opt.count() == 0:
                     denom_opt = page.locator("label").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)).first
                 if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"(?:Rs\.?|₹)?\s*{d}\b", re.IGNORECASE)).last
+                    continue
 
-                if await denom_opt.count() > 0:
-                    chip_text = (await denom_opt.inner_text()).lower()
-                    if "out of stock" in chip_text or "sold out" in chip_text:
+                # 1. Direct disabled check on radio input (guaranteed Out of Stock indicator)
+                try:
+                    radio_inp = denom_opt.locator("input[type='radio']").first
+                    if await radio_inp.count() > 0 and await radio_inp.is_disabled():
                         continue
+                except Exception:
+                    pass
 
-                    # Check parent container text as well
-                    try:
-                        parent_text = (await denom_opt.evaluate("e => e.parentElement ? e.parentElement.innerText : ''")).lower()
-                        if "out of stock" in parent_text:
-                            continue
-                    except Exception:
-                        pass
+                # 2. Check inner text
+                chip_text = (await denom_opt.inner_text()).lower()
+                if "out of stock" in chip_text or "sold out" in chip_text:
+                    continue
 
-                    # Click to select chip and verify the bottom action button confirms live stock!
-                    try:
-                        await denom_opt.click(force=True, timeout=1200)
-                        await page.wait_for_timeout(250)
-                    except Exception:
-                        pass
+                # 3. Check parent container text as well
+                try:
+                    parent_text = (await denom_opt.evaluate("e => e.parentElement ? e.parentElement.innerText : ''")).lower()
+                    if "out of stock" in parent_text:
+                        continue
+                except Exception:
+                    pass
 
-                    bottom_btn = page.locator(
-                        "button[data-testid='proceed-to-pay'], button:has-text('Proceed to Pay'), "
-                        "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Pay ₹'), "
-                        "button:has-text('Out of Stock')"
-                    ).first
-                    if await bottom_btn.count() > 0:
-                        btn_text = (await bottom_btn.inner_text()).lower()
-                        is_disabled = await bottom_btn.is_disabled()
-                        if "out of stock" in btn_text or is_disabled:
-                            continue
-                        if any(kw in btn_text for kw in ["pay", "buy", "proceed", "redeem"]):
-                            logger.info(f"🚨 [Rooter] CONFIRMED IN STOCK: PlayStation ₹{d} (button: '{btn_text}')")
-                            in_stock_list.append(d)
+                # Click to select chip and verify bottom action button
+                try:
+                    chip_label = denom_opt.locator("label").first if await denom_opt.locator("label").count() > 0 else denom_opt
+                    await chip_label.click(force=True, timeout=1200)
+                    await page.wait_for_timeout(350)
+                except Exception:
+                    pass
+
+                bottom_btn = page.locator(
+                    "button.styles_paymentBtn__TiXtN, button:has-text('Out of Stock'), "
+                    "button[data-testid='proceed-to-pay'], button:has-text('Proceed to Pay'), "
+                    "button:has-text('Pay via wallet'), button:has-text('Buy Now')"
+                ).first
+                if await bottom_btn.count() > 0:
+                    btn_text = (await bottom_btn.inner_text()).lower()
+                    if "out of stock" in btn_text:
+                        continue
+                    if any(kw in btn_text for kw in ["pay", "buy", "proceed", "redeem"]):
+                        logger.info(f"🚨 [Rooter] CONFIRMED IN STOCK: PlayStation ₹{d} (button: '{btn_text}')")
+                        in_stock_list.append(d)
         except Exception as e:
             logger.warning(f"Error checking in-stock denominations: {e}")
 
@@ -398,7 +420,15 @@ class RooterService(BasePlatform):
 
             if await denom_opt.count() > 0:
                 chip_text = (await denom_opt.inner_text()).lower()
-                if "out of stock" in chip_text or "sold out" in chip_text:
+                is_radio_disabled = False
+                try:
+                    radio_inp = denom_opt.locator("input[type='radio']").first
+                    if await radio_inp.count() > 0:
+                        is_radio_disabled = await radio_inp.is_disabled()
+                except Exception:
+                    pass
+
+                if "out of stock" in chip_text or "sold out" in chip_text or is_radio_disabled:
                     return PurchaseResult(
                         success=False,
                         platform="rooter",
@@ -417,10 +447,10 @@ class RooterService(BasePlatform):
                         await denom_opt.dispatch_event("click")
                     except Exception:
                         pass
-                await page.wait_for_timeout(250)
+                await page.wait_for_timeout(350)
 
                 # Early out-of-stock check on bottom button to avoid needless 10s wait
-                bottom_chk = page.locator("button[data-testid='proceed-to-pay'], button.styles_paymentBtn__TiXtN").first
+                bottom_chk = page.locator("button.styles_paymentBtn__TiXtN, button:has-text('Out of Stock')").first
                 if await bottom_chk.count() > 0:
                     b_txt = (await bottom_chk.inner_text()).lower()
                     if "out of stock" in b_txt:
@@ -489,13 +519,16 @@ class RooterService(BasePlatform):
             if progress_callback:
                 await progress_callback(f"Clicking Buy / Pay on {prod_name}...", "🛒")
 
+            # Auto-dismiss region popup if present before clicking
+            await self.dismiss_location_popup(page)
+
             # Click the main page checkout button (supports dynamic cart prices, discounts, fees)
             buy_btn_selector = (
+                "button.styles_paymentBtn__TiXtN, "
                 "button[data-testid='proceed-to-pay'], button[testid='proceed-to-pay'], "
                 "button[data-testid='add-address-btn'], button[testid='add-address-btn'], "
-                "button.styles_paymentBtn__TiXtN, "
-                "button:has-text('Pay'), button:has-text('Proceed to Pay'), "
-                "button:has-text('Pay via wallet'), button:has-text('Buy Now'), button:has-text('Proceed')"
+                "button:has-text('Proceed to Pay'), button:has-text('Pay via wallet'), "
+                "button:has-text('Pay ₹'), button:has-text('Buy Now')"
             )
 
             # Fast retry loop to click main button as soon as React enables it

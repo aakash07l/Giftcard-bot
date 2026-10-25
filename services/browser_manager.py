@@ -228,6 +228,13 @@ class BrowserManager:
             window.chrome = {
                 runtime: {}
             };
+            try {
+                sessionStorage.setItem('region-switch-stay-preference', 'true');
+                localStorage.setItem('region-switch-stay-preference', 'true');
+                localStorage.setItem('country', 'IN');
+                localStorage.setItem('COUNTRY', 'IN');
+                localStorage.setItem('currency', 'INR');
+            } catch (e) {}
         """
         raw_auth_json = None
         if active_token:
@@ -245,6 +252,8 @@ class BrowserManager:
             escaped_json = raw_auth_json.replace("\\", "\\\\").replace("'", "\\'")
             init_script += f"""
                 try {{
+                    sessionStorage.setItem('region-switch-stay-preference', 'true');
+                    localStorage.setItem('region-switch-stay-preference', 'true');
                     localStorage.setItem('user_auth', '{escaped_json}');
                     localStorage.setItem('rooter_token', '{active_token}');
                     localStorage.setItem('token', '{active_token}');
@@ -257,6 +266,7 @@ class BrowserManager:
                     document.cookie = "COUNTRY=IN; path=/; domain=.rooter.gg";
                     document.cookie = "country=IN; path=/; domain=.rooter.gg";
                     document.cookie = "currency=INR; path=/; domain=.rooter.gg";
+                    document.cookie = "region-switch-stay-preference=true; path=/; domain=.rooter.gg";
                 }} catch (e) {{}}
             """
 
@@ -269,6 +279,7 @@ class BrowserManager:
                     {"name": "COUNTRY", "value": "IN", "domain": ".rooter.gg", "path": "/"},
                     {"name": "country", "value": "IN", "domain": ".rooter.gg", "path": "/"},
                     {"name": "currency", "value": "INR", "domain": ".rooter.gg", "path": "/"},
+                    {"name": "region-switch-stay-preference", "value": "true", "domain": ".rooter.gg", "path": "/"},
                 ]
                 if raw_auth_json:
                     encoded_cookie = urllib.parse.quote(raw_auth_json)
