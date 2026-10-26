@@ -168,6 +168,62 @@ class BrowserManager:
         except Exception:
             return False
 
+    def get_indian_region_cookies(self):
+        """Rooter ko 100% Indian region batane wali cookies taaki popup paida hi na ho."""
+        exp = 1893456000  # Year 2030
+        return [
+            {
+                "name": "COUNTRY",
+                "value": "IN",
+                "domain": "shop.rooter.gg",
+                "path": "/",
+                "expires": exp,
+                "httpOnly": False,
+                "secure": False,
+                "sameSite": "Lax",
+            },
+            {
+                "name": "COUNTRY",
+                "value": "IN",
+                "domain": ".rooter.gg",
+                "path": "/",
+                "expires": exp,
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "Lax",
+            },
+            {
+                "name": "COUNTRY_LOCALE",
+                "value": "en-IN",
+                "domain": "shop.rooter.gg",
+                "path": "/",
+                "expires": exp,
+                "httpOnly": True,
+                "secure": False,
+                "sameSite": "Lax",
+            },
+            {
+                "name": "LANGUAGE",
+                "value": "en",
+                "domain": "shop.rooter.gg",
+                "path": "/",
+                "expires": exp,
+                "httpOnly": False,
+                "secure": False,
+                "sameSite": "Lax",
+            },
+            {
+                "name": "darkMode",
+                "value": "true",
+                "domain": ".rooter.gg",
+                "path": "/",
+                "expires": exp,
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "Lax",
+            },
+        ]
+
     async def create_context(
         self,
         user_id: Optional[int] = None,
@@ -202,17 +258,19 @@ class BrowserManager:
             user_agent=DEFAULT_USER_AGENT,
             viewport={"width": 1366, "height": 768},
             permissions=["geolocation"],
-            geolocation={"latitude": 28.6304, "longitude": 77.2177},
+            geolocation={"latitude": 28.6139, "longitude": 77.2090},
             locale="en-IN",
             timezone_id="Asia/Kolkata",
             extra_http_headers={
-                "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+                "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+                "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
             },
         )
 
-        # Block heavy media resources (images, videos) to save RAM, CPU, and bandwidth
-        # Keep SVGs and fonts unblocked so Next.js / Mantine UI renders without client-side exceptions
-        if config.BLOCK_MEDIA_RESOURCES:
+        # Block media only for background sniper tasks to save RAM/CPU, but leave unblocked for login
+        if config.BLOCK_MEDIA_RESOURCES and not fresh:
             try:
                 await context.route(
                     "**/*.{png,jpg,jpeg,webp,gif,mp4,webm,avi,mp3}",
@@ -223,19 +281,57 @@ class BrowserManager:
 
         # Anti-detection stealth script & LocalStorage injection for Auth Tokens
         init_script = """
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            window.chrome = {
-                runtime: {}
-            };
+            // 1. Stealth Anti-Bot Evasion
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en', 'hi'] });
+            window.chrome = { runtime: {} };
+
+            // 2. LocalStorage Indian Region Pre-set
             try {
+                localStorage.setItem('COUNTRY', 'IN');
+                localStorage.setItem('COUNTRY_LOCALE', 'en-IN');
+                localStorage.setItem('LANGUAGE', 'en');
                 sessionStorage.setItem('region-switch-stay-preference', 'true');
                 localStorage.setItem('region-switch-stay-preference', 'true');
                 localStorage.setItem('country', 'IN');
-                localStorage.setItem('COUNTRY', 'IN');
                 localStorage.setItem('currency', 'INR');
             } catch (e) {}
+
+            // 3. Real Human Auto-Clicker for 'No, stay on this site'
+            const clickStayOnSite = () => {
+                try {
+                    const allEls = document.querySelectorAll('button, p, span, div, a');
+                    for (const el of allEls) {
+                        const directText = (el.innerText || el.textContent || '').trim();
+                        if (
+                            directText.toLowerCase() === 'no, stay on this site' ||
+                            directText.toLowerCase() === 'stay on this site'
+                        ) {
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width > 0 && rect.height > 0) {
+                                ['mousedown', 'mouseup', 'click'].forEach(evtType => {
+                                    el.dispatchEvent(new MouseEvent(evtType, {
+                                        view: window,
+                                        bubbles: true,
+                                        cancelable: true,
+                                        buttons: 1
+                                    }));
+                                });
+                                if (typeof el.click === 'function') el.click();
+                            }
+                        }
+                    }
+                } catch (e) {}
+            };
+
+            setInterval(clickStayOnSite, 350);
+            document.addEventListener('DOMContentLoaded', () => {
+                clickStayOnSite();
+                if (document.body) {
+                    const obs = new MutationObserver(clickStayOnSite);
+                    obs.observe(document.body, { childList: true, subtree: true });
+                }
+            });
         """
         raw_auth_json = None
         if active_token:
@@ -276,12 +372,7 @@ class BrowserManager:
         # Inject clean store cookies (bypasses location popup & CloudFront WAF)
         if platform == "rooter":
             try:
-                cookies_to_add = [
-                    {"name": "COUNTRY", "value": "IN", "domain": ".rooter.gg", "path": "/"},
-                    {"name": "country", "value": "IN", "domain": ".rooter.gg", "path": "/"},
-                    {"name": "currency", "value": "INR", "domain": ".rooter.gg", "path": "/"},
-                    {"name": "region-switch-stay-preference", "value": "true", "domain": ".rooter.gg", "path": "/"},
-                ]
+                cookies_to_add = list(self.get_indian_region_cookies())
                 if raw_auth_json:
                     encoded_cookie = urllib.parse.quote(raw_auth_json)
                     cookies_to_add.append({

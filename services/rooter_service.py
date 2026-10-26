@@ -67,17 +67,248 @@ class RooterService(BasePlatform):
         progress_callback: Optional[ProgressCallback] = None,
     ) -> bool:
         """Logs into Rooter via mobile number and SMS OTP."""
+    async def _destroy_location_popup(self, page: Page):
+        """Clicks 'No, stay on this site' and vaporizes modal from DOM if lingering."""
+        try:
+            await self.dismiss_location_popup(page)
+        except Exception:
+            pass
+
+        try:
+            await page.evaluate("""() => {
+                const allEls = Array.from(document.querySelectorAll('button, p, span, div, a'));
+                for (const el of allEls) {
+                    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    if (txt === 'no, stay on this site' || txt === 'stay on this site') {
+                        el.click();
+                    }
+                }
+                for (const div of document.querySelectorAll('div, section')) {
+                    if (div.innerText && div.innerText.includes('Different Location Detected')) {
+                        const modal = div.closest('div[role="dialog"]') || div.closest('.fixed');
+                        if (modal) modal.remove();
+                    }
+                }
+            }""")
+        except Exception:
+            pass
+
+    async def _find_mobile_input(self, page: Page):
+        selectors = [
+            'input[type="tel"]',
+            'input[inputmode="tel"]',
+            'input[name="phone"]',
+            'input[placeholder*="mobile" i]',
+            'input[placeholder*="number" i]',
+            'input[placeholder*="phone" i]',
+            'input[placeholder*="enter" i]',
+        ]
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
+                count = await locator.count()
+                for index in range(count):
+                    item = locator.nth(index)
+                    if await item.is_visible(timeout=300):
+                        box = await item.bounding_box()
+                        if box and box["y"] < 85:
+                            continue
+                        ph = (await item.get_attribute("placeholder") or "").lower()
+                        if "search" in ph or "bgmi" in ph or "valorant" in ph or "coupon" in ph:
+                            continue
+                        return item
+            except Exception:
+                pass
+        return None
+
+    async def _open_login_popup(self, page: Page):
+        await self._destroy_location_popup(page)
+        await asyncio.sleep(0.6)
+
+        mobile_input = await self._find_mobile_input(page)
+        if mobile_input is not None:
+            return mobile_input
+
+        # Step 1: Click exact rightmost SVG icon in the top navbar (Profile Icon)
+        try:
+            icon_info = await page.evaluate("""() => {
+                const svgs = Array.from(document.querySelectorAll('svg'));
+                const topRight = [];
+                for (const svg of svgs) {
+                    const r = svg.getBoundingClientRect();
+                    if (r.top >= 5 && r.top <= 75 && r.left > 800 && r.width >= 14 && r.width <= 60) {
+                        topRight.push({
+                            x: r.left + r.width / 2,
+                            y: r.top + r.height / 2,
+                            left: r.left
+                        });
+                    }
+                }
+                if (topRight.length === 0) return null;
+                topRight.sort((a, b) => b.left - a.left);
+                return topRight[0];
+            }""")
+
+            if icon_info and "x" in icon_info and "y" in icon_info:
+                px, py = icon_info["x"], icon_info["y"]
+                await page.mouse.move(px, py, steps=6)
+                await page.mouse.click(px, py)
+                await asyncio.sleep(1.8)
+
+                mobile_input = await self._find_mobile_input(page)
+                if mobile_input is not None:
+                    return mobile_input
+        except Exception:
+            pass
+
+        # Step 2: Check if clicking profile icon opened a dropdown/menu with "Login" button
+        login_texts = [
+            page.get_by_text("Login / Sign Up", exact=False),
+            page.get_by_text("Login / Signup", exact=False),
+            page.get_by_text("Sign In", exact=False),
+            page.locator("button:has-text('Login')"),
+            page.locator("a:has-text('Login')"),
+            page.get_by_text("Login", exact=True),
+        ]
+        for candidate in login_texts:
+            try:
+                if await candidate.count() > 0 and await candidate.first.is_visible(timeout=400):
+                    await candidate.first.click(force=True, timeout=2000)
+                    await asyncio.sleep(1.5)
+                    mobile_input = await self._find_mobile_input(page)
+                    if mobile_input is not None:
+                        return mobile_input
+            except Exception:
+                pass
+
+        # Step 3: Fallback coordinates for top-right profile icon
+        for coord_x in [1208, 1143, 1225]:
+            try:
+                await page.mouse.move(coord_x, 36, steps=5)
+                await page.mouse.click(coord_x, 36)
+                await asyncio.sleep(1.2)
+                mobile_input = await self._find_mobile_input(page)
+                if mobile_input is not None:
+                    return mobile_input
+            except Exception:
+                pass
+
+        # Step 4: Click "Apply Coupons" or "Login to" on page
+        extra_triggers = [
+            page.locator("button:has-text('Login to')"),
+            page.get_by_text("Apply Coupons", exact=False),
+        ]
+        for trig in extra_triggers:
+            try:
+                if await trig.count() > 0 and await trig.first.is_visible(timeout=300):
+                    await trig.first.click(force=True, timeout=1500)
+                    await asyncio.sleep(1.5)
+                    mobile_input = await self._find_mobile_input(page)
+                    if mobile_input is not None:
+                        return mobile_input
+            except Exception:
+                pass
+
+        return None
+
+    async def _find_send_otp_button(self, page: Page):
+        candidates = [
+            page.locator("button:has-text('Continue')"),
+            page.locator("button:has-text('CONTINUE')"),
+            page.locator("button:has-text('Send OTP')"),
+            page.locator("button:has-text('Get OTP')"),
+            page.locator("button[type='submit']"),
+        ]
+        for locator in candidates:
+            try:
+                count = await locator.count()
+                for i in range(count):
+                    btn = locator.nth(i)
+                    if await btn.is_visible(timeout=300):
+                        txt = (await btn.inner_text() or "").strip().lower()
+                        if "switch" in txt or "local" in txt or "stay" in txt or "yes" in txt:
+                            continue
+                        return btn
+            except Exception:
+                pass
+        return None
+
+    async def _find_otp_inputs(self, page: Page, phone_number: str = ""):
+        try:
+            inputs = page.locator("input:visible")
+            count = await inputs.count()
+            valid_boxes = []
+
+            for i in range(count):
+                el = inputs.nth(i)
+                box = await el.bounding_box()
+                if not box or box["y"] < 85:
+                    continue
+
+                ph = (await el.get_attribute("placeholder") or "").lower()
+                if "search" in ph or "bgmi" in ph or "valorant" in ph or "mobile" in ph or "phone" in ph:
+                    continue
+
+                val = (await el.input_value() or "").strip()
+                if phone_number and phone_number in val:
+                    continue
+
+                valid_boxes.append(el)
+
+            if len(valid_boxes) >= 4:
+                return valid_boxes[:8]
+
+            if len(valid_boxes) == 1:
+                verify_btn = await self._find_verify_button(page)
+                if verify_btn is not None:
+                    return valid_boxes
+        except Exception:
+            pass
+
+        return []
+
+    async def _find_verify_button(self, page: Page):
+        candidates = [
+            page.locator("button:has-text('Verify')"),
+            page.locator("button:has-text('VERIFY')"),
+            page.get_by_role("button", name="Verify Now", exact=False),
+            page.locator("button.styles_verifyOtpBtn__DkYRE"),
+            page.locator("button.styles_verifyOtpBtn__2LU_E"),
+        ]
+        for locator in candidates:
+            try:
+                count = await locator.count()
+                for i in range(count):
+                    btn = locator.nth(i)
+                    if await btn.is_visible(timeout=300):
+                        return btn
+            except Exception:
+                pass
+        return None
+
+    async def perform_login(
+        self,
+        page: Page,
+        phone_number: str,
+        otp_callback: Callable[[], Awaitable[str]],
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> bool:
+        """
+        Executes human-like login flow on Rooter Shop using Playwright.
+        Bypasses CloudFront WAF and triggers Indian SMS OTP reliably.
+        """
         try:
             self.last_logged_in_token = None
             clean_phone = re.sub(r"\D", "", phone_number)[-10:]
             if progress_callback:
-                await progress_callback("Opening Rooter to request OTP...", "🔍")
+                await progress_callback(f"Opening Rooter PlayStation page to request OTP for +91 {clean_phone}...", "🔍")
 
-            await page.goto(self.base_url, timeout=config.BROWSER_TIMEOUT_MS)
+            # Directly load PlayStation product page (same proven flow as rooter-auto-buyer)
+            await page.goto(self.playstation_url, timeout=config.BROWSER_TIMEOUT_MS)
             await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(1000)
+            await asyncio.sleep(1.2)
 
-            # Clear any residual auth in localStorage/cookies to guarantee clean unauthenticated state
+            # Clear any stale auth in localStorage/cookies
             await page.evaluate("""() => {
                 try {
                     localStorage.removeItem('token');
@@ -89,60 +320,47 @@ class RooterService(BasePlatform):
                 } catch(e) {}
             }""")
 
-            # Auto-dismiss region popup if present
-            await self.dismiss_location_popup(page)
-            await page.wait_for_timeout(400)
+            # Destroy location popup
+            await self._destroy_location_popup(page)
+            await asyncio.sleep(0.5)
 
-            # Check if phone input is already visible or open drawer via header profile avatar (with retry for hydration lag)
-            phone_input = page.locator("input[placeholder*='Mobile Number'], input[placeholder*='mobile'], input[type='tel']").first
-            for attempt in range(10):
-                if await phone_input.is_visible():
+            # Open login drawer
+            mobile_input = await self._open_login_popup(page)
+            if mobile_input is None:
+                logger.error("Could not find mobile number input on Rooter.")
+                return False
+
+            await mobile_input.click(force=True)
+            await asyncio.sleep(0.3)
+            await mobile_input.fill("")
+            await page.keyboard.type(clean_phone, delay=65)
+            await asyncio.sleep(0.8)
+
+            # Find Continue / Send OTP button
+            send_otp_button = await self._find_send_otp_button(page)
+            if send_otp_button is None:
+                logger.error("Could not find Continue button on Rooter.")
+                return False
+
+            await send_otp_button.evaluate(
+                "(el) => { el.removeAttribute('disabled'); el.removeAttribute('data-disabled'); el.disabled = false; }"
+            )
+            await send_otp_button.click(force=True, timeout=3000)
+
+            # Wait for OTP screen
+            otp_ready = False
+            for _ in range(35):
+                await asyncio.sleep(0.5)
+                if await self._find_otp_inputs(page, phone_number=clean_phone):
+                    otp_ready = True
                     break
-                avatar = page.locator("div[class*='headerIconWrappers'], img[alt='profile-avatar-icon'], div[class*='headerRightSide'] > div:last-child, button:has-text('Login')").first
-                try:
-                    if await avatar.count() > 0:
-                        await avatar.click(force=True, timeout=1200)
-                    else:
-                        await page.click("header div[class*='headerRightSide'] div:last-child", force=True, timeout=1200)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(800)
 
-            # Fallback if avatar click didn't trigger drawer (e.g. hydration lag): click a product's Buy Now
-            if not await phone_input.is_visible():
-                try:
-                    await page.goto(self.amazon_pay_url, wait_until="domcontentloaded", timeout=15000)
-                    await page.wait_for_timeout(1500)
-                    prod_btn = page.locator("button.styles_paymentBtn__TiXtN, button:has-text('Pay'), button:has-text('Buy Now')").first
-                    if await prod_btn.is_visible(timeout=3000):
-                        await prod_btn.click(force=True)
-                        await page.wait_for_timeout(1000)
-                except Exception:
-                    pass
-
-            # Wait directly for phone input on the page (prevents collision with location dialog)
-            await phone_input.wait_for(state="visible", timeout=12000)
-            await phone_input.fill(clean_phone)
-            await page.wait_for_timeout(300)
-
-            # Click Continue / Get OTP
-            continue_btn = page.locator("button:has-text('Continue'), button:has-text('Get OTP'), button[type='submit']").first
-            await continue_btn.click(force=True)
-
-            # Wait for OTP screen to appear (either "Verify Now" button or OTP input)
-            otp_indicator = page.locator("button:has-text('Verify Now'), input[data-path='step2.otp'], button:has-text('Resend OTP')").first
-            for _ in range(15):
-                if await otp_indicator.is_visible():
-                    break
-                if await continue_btn.is_visible():
-                    try:
-                        await continue_btn.click(force=True, timeout=1000)
-                    except Exception:
-                        pass
-                await page.wait_for_timeout(800)
+            if not otp_ready:
+                logger.error("OTP input fields did not appear after clicking Continue.")
+                return False
 
             if progress_callback:
-                await progress_callback(f"OTP sent to +91 {clean_phone}! Please reply with OTP in chat...", "📩")
+                await progress_callback(f"OTP sent to +91 {clean_phone}! Reply with OTP in Telegram...", "📩")
 
             # Await OTP code from user via Telegram
             otp_code = await otp_callback()
@@ -152,23 +370,41 @@ class RooterService(BasePlatform):
 
             clean_otp = re.sub(r"\D", "", otp_code)
 
-            # Fill OTP directly on the page
-            otp_input = page.locator("input[data-path='step2.otp'], input.mantine-NumberInput-input, input[inputmode='numeric'], input[placeholder*='OTP']").first
-            await otp_input.wait_for(state="visible", timeout=4000)
-            await otp_input.fill(clean_otp)
-            await page.wait_for_timeout(300)
+            otp_inputs = await self._find_otp_inputs(page, phone_number=clean_phone)
+            if not otp_inputs:
+                logger.error("OTP fields not found when trying to fill code.")
+                return False
 
-            # Click Verify Now
-            verify_btn = page.locator("button.styles_verifyOtpBtn__2LU_E, button.styles_verifyOtpBtn__DkYRE, button:has-text('Verify Now'), button:has-text('Verify'), button[type='submit']").first
-            await verify_btn.click(force=True)
+            if len(otp_inputs) == 1:
+                await otp_inputs[0].focus()
+                await page.keyboard.type(clean_otp, delay=60)
+            else:
+                boxes = otp_inputs[: len(clean_otp)]
+                for i, digit in enumerate(clean_otp):
+                    if i < len(boxes):
+                        await boxes[i].focus()
+                        await page.keyboard.press(digit)
+                        await asyncio.sleep(0.06)
+
+            await asyncio.sleep(0.8)
+
+            verify_button = await self._find_verify_button(page)
+            if verify_button is None:
+                logger.error("Verify button not found on OTP screen.")
+                return False
+
+            await verify_button.evaluate(
+                "(el) => { el.removeAttribute('disabled'); el.removeAttribute('data-disabled'); el.disabled = false; }"
+            )
+            await verify_button.click(force=True, timeout=3000)
 
             if progress_callback:
                 await progress_callback("Verifying OTP and retrieving session token...", "⏳")
 
-            # Wait up to 10s for auth token in localStorage
+            # Poll for clean JWT token in localStorage
             extracted_token = None
             for _ in range(25):
-                await page.wait_for_timeout(400)
+                await asyncio.sleep(0.5)
                 extracted_token = await page.evaluate("""() => {
                     const tok = localStorage.getItem('token') || localStorage.getItem('rooter_token');
                     if (tok && tok.length > 20) return tok;
@@ -187,13 +423,6 @@ class RooterService(BasePlatform):
                 if progress_callback:
                     await progress_callback("Rooter account verified and token synchronized successfully!", "✅")
                 return True
-
-            # Check if an error message is visible in dialog
-            err_msg = modal.locator("div[class*='error'], p[class*='error'], span:has-text('Invalid'), span:has-text('incorrect')").first
-            if await err_msg.is_visible(timeout=1000):
-                err_text = (await err_msg.inner_text()).strip()
-                logger.warning(f"Rooter OTP error: {err_text}")
-                return False
 
             return False
 

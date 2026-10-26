@@ -50,6 +50,7 @@ from bot.handlers import (
     login_method_selected,
     handle_phone_received,
     handle_otp_received,
+    otp_command,
     handle_cookie_received,
     snipe_start_handler,
     snipe_platform_selected,
@@ -146,6 +147,7 @@ def build_application():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_received),
             ],
             BotState.AWAITING_OTP: [
+                CommandHandler("otp", otp_command),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_otp_received),
             ],
             BotState.AWAITING_COOKIE_DATA: [
@@ -220,6 +222,7 @@ def build_application():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("accounts", accounts_command))
     app.add_handler(CommandHandler("addaccount", add_account_command))
+    app.add_handler(CommandHandler("otp", otp_command))
     app.add_handler(CommandHandler("settoken", settoken_command))
     app.add_handler(CommandHandler("setbalance", set_balance_command))
     app.add_handler(CommandHandler("stop_playstore", stop_playstore_handler))

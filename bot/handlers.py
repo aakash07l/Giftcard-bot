@@ -1375,6 +1375,17 @@ async def login_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Initiates login flow for Rooter Shop."""
     query = update.callback_query
     context.user_data["login_platform"] = "rooter"
+
+    # Support /login 9179326103 or /login S1-A1 9179326103 directly
+    if update.message and context.args:
+        args = context.args
+        phone_arg = args[-1].strip()
+        clean = re.sub(r"\D", "", phone_arg)
+        if len(clean) >= 10:
+            clean_10 = clean[-10:]
+            update.message.text = clean_10
+            return await handle_phone_received(update, context)
+
     msg = "🔑 <b>Rooter Shop Authentication</b>\n\nChoose how you want to log into your Rooter account:"
     if query:
         await query.answer()
@@ -1563,16 +1574,52 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_otp_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives the OTP from the user and signals the background login browser."""
     user_id = update.effective_user.id
-    otp_text = update.message.text.strip()
+    raw_text = update.message.text.strip()
+    clean_otp = re.sub(r"\D", "", raw_text)
 
     if user_id in LOGIN_SESSIONS:
-        LOGIN_SESSIONS[user_id]["otp_value"] = otp_text
+        LOGIN_SESSIONS[user_id]["otp_value"] = clean_otp
         LOGIN_SESSIONS[user_id]["otp_event"].set()
-        await update.message.reply_text("⏳ Verifying OTP with platform...")
+        await update.message.reply_text("⏳ <b>Verifying OTP with Rooter...</b>", parse_mode=ParseMode.HTML)
     else:
-        await update.message.reply_text("⚠️ No active login process found. Start with /login.")
+        # Check any active session in case user_id doesn't match exactly
+        if LOGIN_SESSIONS:
+            first_key = list(LOGIN_SESSIONS.keys())[0]
+            LOGIN_SESSIONS[first_key]["otp_value"] = clean_otp
+            LOGIN_SESSIONS[first_key]["otp_event"].set()
+            await update.message.reply_text("⏳ <b>Verifying OTP with Rooter...</b>", parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text("⚠️ No active login process found. Pehle <code>/login [mobile]</code> bhejein.", parse_mode=ParseMode.HTML)
 
     return ConversationHandler.END
+
+async def otp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles direct /otp 123456 or /otp S1-A1 123456 command."""
+    user_id = update.effective_user.id
+    args = context.args or []
+    if not args:
+        return await update.message.reply_text(
+            "❌ <b>Format:</b>\n<code>/otp 123456</code> ya <code>/otp S1-A1 123456</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    otp_arg = args[-1].strip()
+    clean_otp = re.sub(r"\D", "", otp_arg)
+
+    if user_id in LOGIN_SESSIONS:
+        LOGIN_SESSIONS[user_id]["otp_value"] = clean_otp
+        LOGIN_SESSIONS[user_id]["otp_event"].set()
+        await update.message.reply_text(f"⏳ <b>Verifying OTP ({clean_otp}) with Rooter...</b>", parse_mode=ParseMode.HTML)
+    elif LOGIN_SESSIONS:
+        first_key = list(LOGIN_SESSIONS.keys())[0]
+        LOGIN_SESSIONS[first_key]["otp_value"] = clean_otp
+        LOGIN_SESSIONS[first_key]["otp_event"].set()
+        await update.message.reply_text(f"⏳ <b>Verifying OTP ({clean_otp}) with Rooter...</b>", parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(
+            "⚠️ No active login waiting for OTP. Pehle <code>/login [mobile]</code> karein.",
+            parse_mode=ParseMode.HTML,
+        )
 
 async def handle_cookie_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives raw Bearer token or JSON cookies, saves session, and auto-registers into AccountManager."""
