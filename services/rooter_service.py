@@ -78,33 +78,30 @@ class RooterService(BasePlatform):
 
             # Auto-dismiss region popup if present
             await self.dismiss_location_popup(page)
+            await page.wait_for_timeout(400)
 
-            # Trigger Login / Sign Up drawer via header profile avatar or wallet icon
-            avatar = page.locator("img[alt='profile-avatar-icon'], div[class*='headerIconWrappers'], img[alt='wallet-money-icon'], button:has-text('Login')").first
-            if await avatar.is_visible(timeout=5000):
-                await avatar.click(force=True)
-            else:
-                await page.click("div[class*='headerRightSide'] div:last-child")
-            await page.wait_for_timeout(1000)
+            # Check if phone input is already visible or open drawer via header profile avatar
+            phone_input = page.locator("input[placeholder*='Mobile Number'], input[type='tel']").first
+            if not await phone_input.is_visible():
+                avatar = page.locator("img[alt='profile-avatar-icon'], div[class*='headerIconWrappers'], img[alt='wallet-money-icon'], button:has-text('Login')").first
+                if await avatar.is_visible(timeout=4000):
+                    await avatar.click(force=True)
+                else:
+                    await page.click("header div[class*='headerRightSide'] div:last-child", force=True)
+                await page.wait_for_timeout(800)
 
-            # Wait for modal dialog
-            modal = page.locator("div[role='dialog'], .mantine-Modal-content").first
-            await modal.wait_for(state="visible", timeout=6000)
-
-            # Fill 10-digit mobile number
-            clean_phone = re.sub(r"\D", "", phone_number)[-10:]
-            phone_input = modal.locator("input[placeholder*='Mobile Number'], input[type='number'], input[type='tel']").first
-            await phone_input.wait_for(state="visible", timeout=4000)
+            # Wait directly for phone input on the page (prevents collision with location dialog)
+            await phone_input.wait_for(state="visible", timeout=10000)
             await phone_input.fill(clean_phone)
             await page.wait_for_timeout(300)
 
             # Click Continue / Get OTP
-            continue_btn = modal.locator("button:has-text('Continue'), button:has-text('Get OTP'), button[type='submit']").first
+            continue_btn = page.locator("button:has-text('Continue'), button:has-text('Get OTP'), button[type='submit']").first
             await continue_btn.click(force=True)
 
             # Wait for OTP screen to appear (either "Verify Now" button or OTP input)
-            otp_indicator = modal.locator("button:has-text('Verify Now'), input[data-path='step2.otp'], button:has-text('Resend OTP')").first
-            await otp_indicator.wait_for(state="visible", timeout=10000)
+            otp_indicator = page.locator("button:has-text('Verify Now'), input[data-path='step2.otp'], button:has-text('Resend OTP')").first
+            await otp_indicator.wait_for(state="visible", timeout=12000)
 
             if progress_callback:
                 await progress_callback(f"OTP sent to +91 {clean_phone}! Please reply with OTP in chat...", "📩")
@@ -117,14 +114,14 @@ class RooterService(BasePlatform):
 
             clean_otp = re.sub(r"\D", "", otp_code)
 
-            # Fill OTP in input
-            otp_input = modal.locator("input[data-path='step2.otp'], input.mantine-NumberInput-input, input[inputmode='numeric'], input[placeholder*='OTP']").first
-            await otp_input.wait_for(state="visible", timeout=3000)
+            # Fill OTP directly on the page
+            otp_input = page.locator("input[data-path='step2.otp'], input.mantine-NumberInput-input, input[inputmode='numeric'], input[placeholder*='OTP']").first
+            await otp_input.wait_for(state="visible", timeout=4000)
             await otp_input.fill(clean_otp)
             await page.wait_for_timeout(300)
 
             # Click Verify Now
-            verify_btn = modal.locator("button.styles_verifyOtpBtn__2LU_E, button.styles_verifyOtpBtn__DkYRE, button:has-text('Verify Now'), button:has-text('Verify'), button[type='submit']").first
+            verify_btn = page.locator("button.styles_verifyOtpBtn__2LU_E, button.styles_verifyOtpBtn__DkYRE, button:has-text('Verify Now'), button:has-text('Verify'), button[type='submit']").first
             await verify_btn.click(force=True)
 
             if progress_callback:
