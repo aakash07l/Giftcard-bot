@@ -69,6 +69,7 @@ class RooterService(BasePlatform):
         """Logs into Rooter via mobile number and SMS OTP."""
         try:
             self.last_logged_in_token = None
+            clean_phone = re.sub(r"\D", "", phone_number)[-10:]
             if progress_callback:
                 await progress_callback("Opening Rooter to request OTP...", "🔍")
 
