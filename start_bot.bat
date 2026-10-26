@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 title PlayStation Gift Card Telegram Bot
 echo ============================================================
 echo Starting PlayStation Gift Card Telegram Buyer Bot...

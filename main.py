@@ -1,9 +1,8 @@
-"""
+﻿"""
 Main entry point for PlayStation Gift Card Telegram Bot.
 Builds the Telegram Application, registers conversation handlers, and starts polling.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -50,7 +49,6 @@ from bot.handlers import (
     login_method_selected,
     handle_phone_received,
     handle_otp_received,
-    otp_command,
     handle_cookie_received,
     snipe_start_handler,
     snipe_platform_selected,
@@ -64,13 +62,9 @@ from bot.handlers import (
     acc_remove_callback,
     add_account_command,
     set_balance_command,
-    settoken_command,
     stop_playstore_handler,
-    logs_command,
-    screenshot_command,
 )
 from services.browser_manager import browser_manager
-from services.web_dashboard import setup_log_capture, start_web_dashboard, stop_web_dashboard
 
 # Configure logging
 logging.basicConfig(
@@ -85,21 +79,7 @@ def build_application():
         logger.error("FATAL: BOT_TOKEN is not configured! Please set BOT_TOKEN in .env")
         sys.exit(1)
 
-    async def post_init(application):
-        port = int(os.getenv("PORT", "8080"))
-        await start_web_dashboard(port=port)
-
-    async def post_shutdown(application):
-        await stop_web_dashboard()
-        await browser_manager.close()
-
-    app = (
-        ApplicationBuilder()
-        .token(config.BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+    app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
     # 1. Buy Flow Conversation Handler
     buy_conversation = ConversationHandler(
@@ -147,7 +127,6 @@ def build_application():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_received),
             ],
             BotState.AWAITING_OTP: [
-                CommandHandler("otp", otp_command),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_otp_received),
             ],
             BotState.AWAITING_COOKIE_DATA: [
@@ -222,16 +201,10 @@ def build_application():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("accounts", accounts_command))
     app.add_handler(CommandHandler("addaccount", add_account_command))
-    app.add_handler(CommandHandler("otp", otp_command))
-    app.add_handler(CommandHandler("settoken", settoken_command))
     app.add_handler(CommandHandler("setbalance", set_balance_command))
     app.add_handler(CommandHandler("stop_playstore", stop_playstore_handler))
     app.add_handler(CommandHandler("psonly", stop_playstore_handler))
     app.add_handler(CommandHandler("toggle_sim", toggle_sim_handler))
-    app.add_handler(CommandHandler("logs", logs_command))
-    app.add_handler(CommandHandler("log", logs_command))
-    app.add_handler(CommandHandler("screenshot", screenshot_command))
-    app.add_handler(CommandHandler("screen", screenshot_command))
     app.add_handler(CommandHandler("cancel", cancel_flow))
 
     # Register navigation callbacks
@@ -252,7 +225,7 @@ def build_application():
         if isinstance(update, Update) and update.effective_message:
             try:
                 await update.effective_message.reply_text(
-                    "⚠️ Something went wrong. Please send /start to reload the menu."
+                    "ΓÜá∩╕Å Something went wrong. Please send /start to reload the menu."
                 )
             except Exception:
                 pass
@@ -263,7 +236,6 @@ def build_application():
 
 def main():
     """Starts the Telegram bot polling service."""
-    setup_log_capture()
     logger.info("Initializing PlayStation Gift Card Telegram Bot...")
     logger.info(f"Simulation Mode: {config.SIMULATION_MODE}")
     logger.info(f"Headless Browser: {config.HEADLESS}")
@@ -271,10 +243,10 @@ def main():
     app = build_application()
 
     print("\n" + "=" * 55)
-    print("🎮 PLAYSTATION GIFT CARD BUYER BOT STARTED")
-    print(f"• Mode: {'SIMULATION (Safe)' if config.SIMULATION_MODE else 'LIVE PURCHASING'}")
-    print(f"• Token Loaded: {config.BOT_TOKEN[:10]}...***")
-    print("• Listening for Telegram messages and commands...")
+    print("≡ƒÄ« PLAYSTATION GIFT CARD BUYER BOT STARTED")
+    print(f"ΓÇó Mode: {'SIMULATION (Safe)' if config.SIMULATION_MODE else 'LIVE PURCHASING'}")
+    print(f"ΓÇó Token Loaded: {config.BOT_TOKEN[:10]}...***")
+    print("ΓÇó Listening for Telegram messages and commands...")
     print("=" * 55 + "\n")
 
     try:

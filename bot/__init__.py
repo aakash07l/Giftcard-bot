@@ -1,3 +1,3 @@
-"""
+﻿"""
 Bot module initialization.
 """
