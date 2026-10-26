@@ -26,6 +26,7 @@ class RooterService(BasePlatform):
         )
         self.playstation_url = getattr(config, "ROOTER_PLAYSTATION_URL", "https://shop.rooter.gg/product/playstation-gift-cards")
         self.amazon_pay_url = getattr(config, "ROOTER_AMAZON_PAY_URL", "https://shop.rooter.gg/product/amazon-pay-gift-cards")
+        self.last_logged_in_token: Optional[str] = None
 
     def get_product_info(self, denomination: int, product_type: str = "playstation") -> dict:
         """Returns product url, name, and type based on denomination and product_type."""
@@ -46,17 +47,13 @@ class RooterService(BasePlatform):
     async def check_login_status(self, page: Page) -> bool:
         """Verifies if user is logged into Rooter."""
         try:
-            await page.goto(self.base_url, timeout=config.BROWSER_TIMEOUT_MS)
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(1500)
-
-            # Check if login button is visible
-            login_btn = page.locator("button:has-text('Login'), button:has-text('Sign In'), div:has-text('Login / Register')").first
-            if await login_btn.is_visible(timeout=3000):
-                return False
-
-            # Check for profile icon / coin balance
-            profile = page.locator("div[class*='Profile'], img[alt*='avatar'], div[class*='coin-balance']").first
+            has_token = await page.evaluate("""() => {
+                const tok = localStorage.getItem('token') || localStorage.getItem('rooter_token');
+                return !!tok;
+            }""")
+            if has_token:
+                return True
+            profile = page.locator("img[alt='profile-avatar-icon'], div[class*='headerIconWrappers']").first
             return await profile.is_visible(timeout=2000)
         except Exception as e:
             logger.warning(f"Error checking Rooter login status: {e}")
@@ -71,31 +68,48 @@ class RooterService(BasePlatform):
     ) -> bool:
         """Logs into Rooter via mobile number and SMS OTP."""
         try:
+            self.last_logged_in_token = None
             if progress_callback:
-                await progress_callback("Navigating to Rooter login...", "🔍")
+                await progress_callback("Opening Rooter to request OTP...", "🔍")
 
             await page.goto(self.base_url, timeout=config.BROWSER_TIMEOUT_MS)
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(2000)
 
-            # Click login button
-            login_btn = page.locator("button:has-text('Login'), div:has-text('Login')").first
-            await login_btn.click(timeout=5000)
+            # Auto-dismiss region popup if present
+            await self.dismiss_location_popup(page)
+
+            # Trigger Login / Sign Up drawer via header profile avatar or wallet icon
+            avatar = page.locator("img[alt='profile-avatar-icon'], div[class*='headerIconWrappers'], img[alt='wallet-money-icon'], button:has-text('Login')").first
+            if await avatar.is_visible(timeout=5000):
+                await avatar.click(force=True)
+            else:
+                await page.click("div[class*='headerRightSide'] div:last-child")
             await page.wait_for_timeout(1000)
 
-            # Fill phone number
-            clean_phone = re.sub(r"\D", "", phone_number)[-10:]
-            phone_input = page.locator("input[type='tel'], input[placeholder*='Mobile'], input[name*='phone']").first
-            await phone_input.fill(clean_phone)
-            await page.wait_for_timeout(500)
+            # Wait for modal dialog
+            modal = page.locator("div[role='dialog'], .mantine-Modal-content").first
+            await modal.wait_for(state="visible", timeout=6000)
 
-            # Submit phone to request OTP
-            get_otp_btn = page.locator("button:has-text('Get OTP'), button:has-text('Continue'), button:has-text('Next')").first
-            await get_otp_btn.click()
+            # Fill 10-digit mobile number
+            clean_phone = re.sub(r"\D", "", phone_number)[-10:]
+            phone_input = modal.locator("input[placeholder*='Mobile Number'], input[type='number'], input[type='tel']").first
+            await phone_input.wait_for(state="visible", timeout=4000)
+            await phone_input.fill(clean_phone)
+            await page.wait_for_timeout(300)
+
+            # Click Continue / Get OTP
+            continue_btn = modal.locator("button:has-text('Continue'), button:has-text('Get OTP'), button[type='submit']").first
+            await continue_btn.click(force=True)
+
+            # Wait for OTP screen to appear (either "Verify Now" button or OTP input)
+            otp_indicator = modal.locator("button:has-text('Verify Now'), input[data-path='step2.otp'], button:has-text('Resend OTP')").first
+            await otp_indicator.wait_for(state="visible", timeout=10000)
 
             if progress_callback:
-                await progress_callback(f"OTP sent to +91 {clean_phone}. Please reply with OTP in chat...", "📩")
+                await progress_callback(f"OTP sent to +91 {clean_phone}! Please reply with OTP in chat...", "📩")
 
-            # Await OTP code from user
+            # Await OTP code from user via Telegram
             otp_code = await otp_callback()
             if not otp_code:
                 logger.error("No OTP provided for Rooter login.")
@@ -103,30 +117,53 @@ class RooterService(BasePlatform):
 
             clean_otp = re.sub(r"\D", "", otp_code)
 
-            # Fill OTP inputs
-            otp_inputs = page.locator("input[type='number'], input[inputmode='numeric']")
-            count = await otp_inputs.count()
-            if count > 1:
-                for i in range(min(count, len(clean_otp))):
-                    await otp_inputs.nth(i).fill(clean_otp[i])
-            else:
-                single_input = page.locator("input[placeholder*='OTP'], input[name*='otp']").first
-                await single_input.fill(clean_otp)
+            # Fill OTP in input
+            otp_input = modal.locator("input[data-path='step2.otp'], input.mantine-NumberInput-input, input[inputmode='numeric'], input[placeholder*='OTP']").first
+            await otp_input.wait_for(state="visible", timeout=3000)
+            await otp_input.fill(clean_otp)
+            await page.wait_for_timeout(300)
 
-            await page.wait_for_timeout(800)
+            # Click Verify Now
+            verify_btn = modal.locator("button.styles_verifyOtpBtn__2LU_E, button.styles_verifyOtpBtn__DkYRE, button:has-text('Verify Now'), button:has-text('Verify'), button[type='submit']").first
+            await verify_btn.click(force=True)
 
-            # Click verify
-            verify_btn = page.locator("button:has-text('Verify'), button:has-text('Submit')").first
-            if await verify_btn.is_visible(timeout=2000):
-                await verify_btn.click()
-
-            await page.wait_for_load_state("networkidle", timeout=10000)
             if progress_callback:
-                await progress_callback("Rooter account verified successfully!", "✅")
-            return True
+                await progress_callback("Verifying OTP and retrieving session token...", "⏳")
+
+            # Wait up to 10s for auth token in localStorage
+            extracted_token = None
+            for _ in range(25):
+                await page.wait_for_timeout(400)
+                extracted_token = await page.evaluate("""() => {
+                    const tok = localStorage.getItem('token') || localStorage.getItem('rooter_token');
+                    if (tok && tok.length > 20) return tok;
+                    try {
+                        const auth = JSON.parse(localStorage.getItem('user_auth') || '{}');
+                        if (auth.accessToken && auth.accessToken.length > 20) return auth.accessToken;
+                    } catch (e) {}
+                    return null;
+                }""")
+                if extracted_token:
+                    break
+
+            if extracted_token:
+                self.last_logged_in_token = extracted_token
+                logger.info(f"Rooter login successful for +91 {clean_phone}! Clean token captured.")
+                if progress_callback:
+                    await progress_callback("Rooter account verified and token synchronized successfully!", "✅")
+                return True
+
+            # Check if an error message is visible in dialog
+            err_msg = modal.locator("div[class*='error'], p[class*='error'], span:has-text('Invalid'), span:has-text('incorrect')").first
+            if await err_msg.is_visible(timeout=1000):
+                err_text = (await err_msg.inner_text()).strip()
+                logger.warning(f"Rooter OTP error: {err_text}")
+                return False
+
+            return False
 
         except Exception as e:
-            logger.error(f"Error during Rooter login: {e}")
+            logger.error(f"Error during Rooter login: {e}", exc_info=True)
             return False
 
     async def search_playstation_cards(

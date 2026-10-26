@@ -1486,18 +1486,48 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
             )
 
             if success:
+                clean_phone = re.sub(r"\D", "", phone_text)[-10:]
+                token = getattr(service, "last_logged_in_token", None)
+                if not token and page:
+                    try:
+                        token = await page.evaluate("() => localStorage.getItem('token') || localStorage.getItem('rooter_token')")
+                    except Exception:
+                        pass
+
+                added_acc = None
+                if token:
+                    browser_manager.import_session_json(user_id, platform, token)
+                    try:
+                        added_acc = await account_manager.add_account_async(
+                            token=token,
+                            label=f"Account (+91 {clean_phone})",
+                        )
+                    except Exception as ea:
+                        logger.warning(f"Error registering new OTP account: {ea}")
+                    config.ROOTER_AUTH_TOKEN = token
+
                 await browser_manager.save_session(browser_context, user_id, platform)
+
+                acc_info = ""
+                if added_acc:
+                    acc_info = (
+                        f"\n\n👤 <b>Account:</b> +91 {clean_phone}\n"
+                        f"💰 <b>Live Wallet Balance:</b> <b>₹{added_acc.get('wallet_balance', 0):,.2f}</b> [Rooter Live 🟢]\n"
+                        f"🎯 <b>Sniper Status:</b> 🟢 Ready for 24/7 Restock Auto-Buying!\n\n"
+                        f"📋 <b>Your Clean Auth Token (Tap to Copy):</b>\n"
+                        f"<code>{token}</code>"
+                    )
+
                 await update.message.reply_text(
-                    f"✅ <b>Successfully logged into {platform.title()}!</b>\n"
-                    f"Session cookies have been saved. You can now use <code>/buy</code>.",
+                    f"✅ <b>Successfully logged into {platform.title()} via OTP!</b>{acc_info}\n\n"
+                    f"Aap ab seedha <code>/snipe</code> start kar sakte hain!",
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
             else:
                 await update.message.reply_text(
                     f"❌ <b>Login failed or timed out on {platform.title()}.</b>\n\n"
-                    f"💡 <i>Tip:</i> Cloud servers par Rooter anti-bot security OTP block kar sakti hai.\n"
-                    f"Aap seedha <code>/login</code> me jakar <b>Paste Bearer Token</b> option se apna auth token paste kar sakte hain!",
+                    f"💡 <i>Tip:</i> Agar OTP aane me dikkat ho, toh aap seedha <code>/login</code> me jakar <b>Paste Bearer Token</b> option se apna auth token paste kar sakte hain!",
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
