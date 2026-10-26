@@ -1,4 +1,4 @@
-﻿"""
+"""
 Abstract base class and data structures for platform automation scrapers.
 """
 

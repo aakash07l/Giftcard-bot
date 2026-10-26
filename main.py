@@ -1,4 +1,4 @@
-﻿"""
+"""
 Main entry point for PlayStation Gift Card Telegram Bot.
 Builds the Telegram Application, registers conversation handlers, and starts polling.
 """
@@ -225,7 +225,7 @@ def build_application():
         if isinstance(update, Update) and update.effective_message:
             try:
                 await update.effective_message.reply_text(
-                    "ΓÜá∩╕Å Something went wrong. Please send /start to reload the menu."
+                    "⚠️ Something went wrong. Please send /start to reload the menu."
                 )
             except Exception:
                 pass
@@ -243,10 +243,10 @@ def main():
     app = build_application()
 
     print("\n" + "=" * 55)
-    print("≡ƒÄ« PLAYSTATION GIFT CARD BUYER BOT STARTED")
-    print(f"ΓÇó Mode: {'SIMULATION (Safe)' if config.SIMULATION_MODE else 'LIVE PURCHASING'}")
-    print(f"ΓÇó Token Loaded: {config.BOT_TOKEN[:10]}...***")
-    print("ΓÇó Listening for Telegram messages and commands...")
+    print("🎮 PLAYSTATION GIFT CARD BUYER BOT STARTED")
+    print(f"• Mode: {'SIMULATION (Safe)' if config.SIMULATION_MODE else 'LIVE PURCHASING'}")
+    print(f"• Token Loaded: {config.BOT_TOKEN[:10]}...***")
+    print("• Listening for Telegram messages and commands...")
     print("=" * 55 + "\n")
 
     try:

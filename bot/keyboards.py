@@ -1,6 +1,6 @@
 """
 Telegram inline keyboards for the PlayStation 4K Gift Card Buyer Bot.
-Provides rich interactive UI buttons for platform selection, denominations, login modes, and confirmations.
+Provides rich interactive UI buttons for 4K auto-sniper, multi-account management, and live purchases.
 """
 
 from typing import List, Dict, Any, Optional
@@ -60,7 +60,7 @@ def get_stop_snipe_keyboard() -> InlineKeyboardMarkup:
     ])
 
 def get_playstore_stopped_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard displayed after stopping sniper."""
+    """Keyboard displayed after stopping auto-sniper."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎯 Restart 4K PlayStation Sniper", callback_data=f"snipe_denom:rooter:{config.TARGET_DENOMINATION}")],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")],

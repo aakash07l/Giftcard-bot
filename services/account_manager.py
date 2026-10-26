@@ -1,4 +1,4 @@
-﻿"""
+"""
 Multi-Account Manager for Rooter Gift Card Sniper Bot.
 Manages 5-10 Rooter accounts, their JWT Bearer tokens, wallet balances, and active states.
 Persists data to sessions/accounts.json.
@@ -56,7 +56,7 @@ async def fetch_live_balance_for_token(token: str) -> Optional[float]:
                 cred = float(comp.get("credit", 0.0))
                 vouch = float(comp.get("voucher", 0.0))
                 total = round(dep + cred + vouch, 2)
-                logger.info(f"Rooter live balance fetched: Γé╣{total:.2f} (dep={dep}, cred={cred}, vouch={vouch})")
+                logger.info(f"Rooter live balance fetched: ₹{total:.2f} (dep={dep}, cred={cred}, vouch={vouch})")
                 return total
             else:
                 logger.warning(f"Rooter balance API returned status {resp.status_code}: {resp.text[:100]}")
@@ -173,7 +173,7 @@ class AccountManager:
 
         self.accounts.append(new_acc)
         self._save()
-        logger.info(f"Added new account {new_id} ({new_label}, UID: {uid}, Balance: Γé╣{wallet_balance})")
+        logger.info(f"Added new account {new_id} ({new_label}, UID: {uid}, Balance: ₹{wallet_balance})")
         return new_acc
 
     def remove_account(self, acc_id: str) -> bool:
@@ -192,7 +192,7 @@ class AccountManager:
         if acc:
             acc["wallet_balance"] = max(0.0, float(balance))
             self._save()
-            logger.info(f"Updated balance for {acc['id']} -> Γé╣{acc['wallet_balance']:,}")
+            logger.info(f"Updated balance for {acc['id']} -> ₹{acc['wallet_balance']:,}")
             return True
         return False
 

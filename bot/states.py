@@ -1,4 +1,4 @@
-﻿"""
+"""
 States for Telegram ConversationHandler flows.
 """
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Browser lifecycle manager for Playwright.
 Handles headless Chromium instances, session storage_state, anti-detect headers, and screenshot capture.
 """
