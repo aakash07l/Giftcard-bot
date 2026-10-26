@@ -174,15 +174,16 @@ class BrowserManager:
         platform: Optional[str] = "rooter",
         apply_storage_state: bool = True,
         custom_token: Optional[str] = None,
+        fresh: bool = False,
     ) -> BrowserContext:
         """Creates an authenticated or fresh BrowserContext."""
         await self.initialize()
 
-        raw_active_token = custom_token or self.get_active_token(user_id)
-        active_token = extract_jwt_token(raw_active_token)
+        raw_active_token = None if fresh else (custom_token or self.get_active_token(user_id))
+        active_token = extract_jwt_token(raw_active_token) if not fresh else None
 
         storage_path = None
-        if apply_storage_state and user_id:
+        if not fresh and apply_storage_state and user_id:
             s_file = self.get_session_file(user_id, "rooter")
             if s_file.exists():
                 try:

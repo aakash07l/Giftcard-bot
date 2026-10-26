@@ -1476,7 +1476,7 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
         browser_context = None
         page = None
         try:
-            browser_context = await browser_manager.create_context()
+            browser_context = await browser_manager.create_context(fresh=True)
             page = await browser_context.new_page()
 
             success = await service.perform_login(

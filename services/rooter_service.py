@@ -74,7 +74,19 @@ class RooterService(BasePlatform):
 
             await page.goto(self.base_url, timeout=config.BROWSER_TIMEOUT_MS)
             await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(1000)
+
+            # Clear any residual auth in localStorage/cookies to guarantee clean unauthenticated state
+            await page.evaluate("""() => {
+                try {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('rooter_token');
+                    localStorage.removeItem('user_auth');
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('auth_token');
+                    document.cookie = "user_auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.rooter.gg";
+                } catch(e) {}
+            }""")
 
             # Auto-dismiss region popup if present
             await self.dismiss_location_popup(page)
