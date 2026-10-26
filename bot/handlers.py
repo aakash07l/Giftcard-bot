@@ -1525,12 +1525,28 @@ async def handle_phone_received(update: Update, context: ContextTypes.DEFAULT_TY
                     reply_markup=get_main_menu_keyboard(),
                 )
             else:
+                shot_file = None
+                if page:
+                    try:
+                        shot_file = await browser_manager.capture_screenshot(page, "login_fail")
+                    except Exception:
+                        pass
                 await update.message.reply_text(
                     f"❌ <b>Login failed or timed out on {platform.title()}.</b>\n\n"
                     f"💡 <i>Tip:</i> Agar OTP aane me dikkat ho, toh aap seedha <code>/login</code> me jakar <b>Paste Bearer Token</b> option se apna auth token paste kar sakte hain!",
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_main_menu_keyboard(),
                 )
+                if shot_file and os.path.exists(shot_file):
+                    try:
+                        with open(shot_file, "rb") as photo:
+                            await context.bot.send_photo(
+                                chat_id=update.effective_chat.id,
+                                photo=photo,
+                                caption="📸 Screenshot captured during login attempt on Rooter",
+                            )
+                    except Exception:
+                        pass
         except Exception as e:
             logger.error(f"Login error: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Error during login: {html.escape(str(e))}")

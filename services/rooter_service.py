@@ -80,18 +80,35 @@ class RooterService(BasePlatform):
             await self.dismiss_location_popup(page)
             await page.wait_for_timeout(400)
 
-            # Check if phone input is already visible or open drawer via header profile avatar
-            phone_input = page.locator("input[placeholder*='Mobile Number'], input[type='tel']").first
-            if not await phone_input.is_visible():
-                avatar = page.locator("img[alt='profile-avatar-icon'], div[class*='headerIconWrappers'], img[alt='wallet-money-icon'], button:has-text('Login')").first
-                if await avatar.is_visible(timeout=4000):
-                    await avatar.click(force=True)
-                else:
-                    await page.click("header div[class*='headerRightSide'] div:last-child", force=True)
+            # Check if phone input is already visible or open drawer via header profile avatar (with retry for hydration lag)
+            phone_input = page.locator("input[placeholder*='Mobile Number'], input[placeholder*='mobile'], input[type='tel']").first
+            for attempt in range(10):
+                if await phone_input.is_visible():
+                    break
+                avatar = page.locator("div[class*='headerIconWrappers'], img[alt='profile-avatar-icon'], div[class*='headerRightSide'] > div:last-child, button:has-text('Login')").first
+                try:
+                    if await avatar.count() > 0:
+                        await avatar.click(force=True, timeout=1200)
+                    else:
+                        await page.click("header div[class*='headerRightSide'] div:last-child", force=True, timeout=1200)
+                except Exception:
+                    pass
                 await page.wait_for_timeout(800)
 
+            # Fallback if avatar click didn't trigger drawer (e.g. hydration lag): click a product's Buy Now
+            if not await phone_input.is_visible():
+                try:
+                    await page.goto(self.amazon_pay_url, wait_until="domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(1500)
+                    prod_btn = page.locator("button.styles_paymentBtn__TiXtN, button:has-text('Pay'), button:has-text('Buy Now')").first
+                    if await prod_btn.is_visible(timeout=3000):
+                        await prod_btn.click(force=True)
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
             # Wait directly for phone input on the page (prevents collision with location dialog)
-            await phone_input.wait_for(state="visible", timeout=10000)
+            await phone_input.wait_for(state="visible", timeout=12000)
             await phone_input.fill(clean_phone)
             await page.wait_for_timeout(300)
 
@@ -101,7 +118,15 @@ class RooterService(BasePlatform):
 
             # Wait for OTP screen to appear (either "Verify Now" button or OTP input)
             otp_indicator = page.locator("button:has-text('Verify Now'), input[data-path='step2.otp'], button:has-text('Resend OTP')").first
-            await otp_indicator.wait_for(state="visible", timeout=12000)
+            for _ in range(15):
+                if await otp_indicator.is_visible():
+                    break
+                if await continue_btn.is_visible():
+                    try:
+                        await continue_btn.click(force=True, timeout=1000)
+                    except Exception:
+                        pass
+                await page.wait_for_timeout(800)
 
             if progress_callback:
                 await progress_callback(f"OTP sent to +91 {clean_phone}! Please reply with OTP in chat...", "📩")
