@@ -85,7 +85,7 @@ def format_status_text(user_id: int) -> str:
 
     mode_text = "🧪 Simulation (Dry Run - Safe)" if config.SIMULATION_MODE else "⚡ Live Purchasing"
 
-    sniper_info = ACTIVE_SNIPERS.get(user_id)
+    sniper_info = ACTIVE_SNIPERS.get(user_id) or (next(iter(ACTIVE_SNIPERS.values()), None) if ACTIVE_SNIPERS else None)
     if sniper_info:
         denom_disp = sniper_info.get("denomination", config.TARGET_DENOMINATION)
         checks = sniper_info.get("attempts", 0)

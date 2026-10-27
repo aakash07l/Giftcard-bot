@@ -73,30 +73,73 @@ class AccountManager:
         self._load()
 
     def _load(self):
-        """Loads accounts from JSON file or auto-seeds from config."""
+        """Loads accounts with Railway Environment Variables having Master Authority."""
+        # 1. Read existing cached accounts from file if present
+        cached_map = {}
         if self.filepath.exists():
             try:
                 with open(self.filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.accounts = data.get("accounts", [])
+                    for a in data.get("accounts", []):
+                        tok = a.get("token")
+                        uid = a.get("user_id") or extract_user_id(tok)
+                        if uid:
+                            cached_map[str(uid)] = a
+                        if tok:
+                            cached_map[tok] = a
             except Exception as e:
                 logger.warning(f"Failed to read {self.filepath}: {e}")
-                self.accounts = []
 
-        # Auto-seed initial account from config if accounts list is empty
-        if not self.accounts and config.ROOTER_AUTH_TOKEN and len(config.ROOTER_AUTH_TOKEN) > 10:
-            uid = extract_user_id(config.ROOTER_AUTH_TOKEN)
-            default_acc = {
-                "id": "acc_1",
-                "label": "Account 1 (Primary)",
-                "token": config.ROOTER_AUTH_TOKEN,
-                "user_id": uid or 2104663773,
-                "wallet_balance": 1084.0,
-                "is_active": True,
-                "created_at": datetime.now().isoformat(),
-            }
-            self.accounts.append(default_acc)
+        # 2. Check Railway Environment Variables (ROOTER_TOKEN_1 ... 30, ROOTER_AUTH_TOKENS)
+        env_tokens = getattr(config, "ROOTER_AUTH_TOKENS", [])
+        if not env_tokens and getattr(config, "ROOTER_AUTH_TOKEN", ""):
+            single = config.ROOTER_AUTH_TOKEN.strip()
+            if len(single) > 20:
+                env_tokens = [single]
+
+        if env_tokens:
+            # MASTER AUTHORITY: Railway ENV variables define the active account roster!
+            new_accounts = []
+            seen_tokens = set()
+            for idx, tok in enumerate(env_tokens, start=1):
+                clean_tok = tok.strip()
+                if clean_tok.lower().startswith("bearer "):
+                    clean_tok = clean_tok[7:].strip()
+                if clean_tok in seen_tokens:
+                    continue
+                seen_tokens.add(clean_tok)
+
+                uid = extract_user_id(clean_tok)
+                # Check if we have cached balance/label from previous run
+                cached = cached_map.get(str(uid)) or cached_map.get(clean_tok) or {}
+                cached_bal = float(cached.get("wallet_balance", 0.0))
+                cached_label = cached.get("label") or f"Account {idx}"
+
+                acc_obj = {
+                    "id": f"acc_{idx}",
+                    "label": cached_label,
+                    "token": clean_tok,
+                    "user_id": uid,
+                    "wallet_balance": cached_bal,
+                    "is_active": True,
+                    "created_at": cached.get("created_at") or datetime.now().isoformat(),
+                }
+                new_accounts.append(acc_obj)
+
+            self.accounts = new_accounts
             self._save()
+            logger.info(f"Loaded {len(self.accounts)} account(s) from Railway Environment Variables.")
+            return
+
+        # 3. Fallback: If no ENV tokens set, use cached accounts from file
+        if cached_map:
+            unique_accs = {}
+            for a in cached_map.values():
+                aid = a.get("id") or a.get("token")
+                unique_accs[aid] = a
+            self.accounts = list(unique_accs.values())
+        else:
+            self.accounts = []
 
     def _save(self):
         """Saves current accounts to JSON file atomically."""

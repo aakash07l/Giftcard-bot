@@ -47,12 +47,36 @@ ENV = os.getenv("ENV", "production").lower()
 HEADLESS = os.getenv("HEADLESS", "True").lower() in ("true", "1", "yes")
 BROWSER_TIMEOUT_MS = int(os.getenv("BROWSER_TIMEOUT_MS", "45000"))
 
-# Rooter Account Credentials / Auth Details
-ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "916265656481").strip()
-ROOTER_AUTH_TOKEN = os.getenv(
-    "ROOTER_AUTH_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjIxMDQ2NjM3NzMsInNJZCI6IjVkMWYyNDZiLWMyMTQtNDk2Mi1iMGM3LTQ5MGU0N2I4OGM3NyIsInJvbGVzIjpbXSwiZGV2aWNlIjoid2ViIiwic2ZDcmVhdGVkQXQiOjE3OTIwMzY0MTAsImlzVmVyaWZpZWQiOnRydWUsInVzZXJSb2xlcyI6e30sImlhdCI6MTc5MjAzNjg3OSwiZXhwIjoxNzk1OTI0ODc5fQ.kVdk_tDxFgl8jU0J8J35KQHRFiKJ4rDhSfkMl4YN2jQ"
-).strip()
+# Rooter Account Credentials / Auth Details (Supports 1 to 30 Accounts)
+def get_env_tokens() -> list:
+    """Retrieves list of all configured Rooter tokens from environment variables (1 to 30 accounts)."""
+    tokens = []
+    for i in range(1, 31):
+        tok = (
+            os.getenv(f"ROOTER_TOKEN_{i}", "")
+            or os.getenv(f"ROOTER_AUTH_TOKEN_{i}", "")
+        ).strip()
+        if tok and len(tok) > 20 and tok not in tokens:
+            tokens.append(tok)
+
+    multi_raw = os.getenv("ROOTER_TOKENS", "").strip()
+    if multi_raw:
+        for t in multi_raw.replace("\n", ",").split(","):
+            cleaned = t.strip()
+            if cleaned and len(cleaned) > 20 and cleaned not in tokens:
+                tokens.append(cleaned)
+
+    # Only fallback to single ROOTER_AUTH_TOKEN if no indexed tokens are defined
+    if not tokens:
+        single_tok = os.getenv("ROOTER_AUTH_TOKEN", "").strip()
+        if single_tok and len(single_tok) > 20:
+            tokens.append(single_tok)
+
+    return tokens
+
+ROOTER_MOBILE = os.getenv("ROOTER_MOBILE", "").strip()
+ROOTER_AUTH_TOKENS = get_env_tokens()
+ROOTER_AUTH_TOKEN = ROOTER_AUTH_TOKENS[0] if ROOTER_AUTH_TOKENS else os.getenv("ROOTER_AUTH_TOKEN", "").strip()
 
 # Directories
 SESSION_DIR = BASE_DIR / "sessions"
