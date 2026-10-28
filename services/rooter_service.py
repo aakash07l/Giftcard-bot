@@ -230,8 +230,8 @@ class RooterService(BasePlatform):
 
             await self.dismiss_location_popup(page)
 
-            # Check supported denominations: 4000, 1000, 2000, 3000
-            for d in [4000, 1000, 2000, 3000]:
+            # Check supported denominations: 5000, 4000, 3000, 2000, 1000
+            for d in [5000, 4000, 3000, 2000, 1000]:
                 opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
                 if await opt_locator.count() == 0:
                     opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
@@ -344,6 +344,9 @@ class RooterService(BasePlatform):
                             match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
                             if match_price:
                                 btn_val = float(match_price.group(1).replace(",", ""))
+                                if denomination == 5000 and btn_val < 4200:
+                                    logger.warning(f"[Rooter] Strict Check: ₹5,000 clicked but button shows ₹{btn_val}.")
+                                    return False
                                 if denomination == 4000 and btn_val < 3000:
                                     logger.warning(f"[Rooter] Strict Check: ₹4,000 clicked but button shows ₹{btn_val} (1K default active). Not in stock.")
                                     return False
@@ -448,6 +451,15 @@ class RooterService(BasePlatform):
                     match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
                     if match_price:
                         btn_val = float(match_price.group(1).replace(",", ""))
+                        if denomination == 5000 and btn_val < 4200:
+                            return PurchaseResult(
+                                success=False,
+                                platform="rooter",
+                                denomination=denomination,
+                                quantity=quantity,
+                                account_label=account_label,
+                                message=f"ABORTED STRICT SAFETY: Target was ₹5,000, but Rooter page showed ₹{btn_val:,.0f}."
+                            )
                         if denomination == 4000 and btn_val < 3000:
                             return PurchaseResult(
                                 success=False,

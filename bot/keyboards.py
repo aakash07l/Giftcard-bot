@@ -15,7 +15,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 PSN", callback_data="snipe_denom:rooter:1000"),
         ],
         [
-            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (1K / 4K)", callback_data="snipe_denom:rooter:0"),
+            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (1K / 5K)", callback_data="snipe_denom:rooter:0"),
         ],
         [
             InlineKeyboardButton("👥 Manage Accounts (5-30 AC)", callback_data="accounts_view"),
@@ -121,7 +121,8 @@ def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: Li
             InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 Card (Strict 1K)", callback_data="snipe_denom:rooter:1000"),
         ],
         [
-            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (₹1K / ₹4K)", callback_data="snipe_denom:rooter:0"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹5,000 Card (Strict 5K)", callback_data="snipe_denom:rooter:5000"),
+            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (1K / 5K)", callback_data="snipe_denom:rooter:0"),
         ],
         [
             InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),
