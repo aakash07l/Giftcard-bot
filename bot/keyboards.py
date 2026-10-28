@@ -11,11 +11,14 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Builds the main menu dashboard keyboard."""
     keyboard = [
         [
-            InlineKeyboardButton("🎯 Auto-Snipe ₹4,000 PSN (24/7)", callback_data=f"snipe_denom:rooter:{config.TARGET_DENOMINATION}"),
-            InlineKeyboardButton("🛒 Instant Buy ₹4K PSN", callback_data=f"confirm_buy:rooter:{config.TARGET_DENOMINATION}"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹4,000 PSN", callback_data="snipe_denom:rooter:4000"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 PSN", callback_data="snipe_denom:rooter:1000"),
         ],
         [
-            InlineKeyboardButton("👥 Manage Accounts (5-10 AC)", callback_data="accounts_view"),
+            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (1K / 4K)", callback_data="snipe_denom:rooter:0"),
+        ],
+        [
+            InlineKeyboardButton("👥 Manage Accounts (5-30 AC)", callback_data="accounts_view"),
             InlineKeyboardButton("📊 Status & Sessions", callback_data="status_check"),
         ],
         [
@@ -47,7 +50,11 @@ def get_accounts_keyboard(accounts: List[Dict[str, Any]]) -> InlineKeyboardMarku
             InlineKeyboardButton("❌ Remove", callback_data=f"acc_remove:{acc['id']}"),
         ])
     rows.append([
-        InlineKeyboardButton("🎯 Start 4K Auto-Sniper", callback_data=f"snipe_denom:rooter:{config.TARGET_DENOMINATION}"),
+        InlineKeyboardButton("🎯 Start 4K Sniper", callback_data="snipe_denom:rooter:4000"),
+        InlineKeyboardButton("🎯 Start 1K Sniper", callback_data="snipe_denom:rooter:1000"),
+    ])
+    rows.append([
+        InlineKeyboardButton("⚡ Snipe Any Stock", callback_data="snipe_denom:rooter:0"),
         InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu"),
     ])
     return InlineKeyboardMarkup(rows)
@@ -107,10 +114,14 @@ def get_denominations_keyboard(platform: str = "rooter", denominations: List[int
     return InlineKeyboardMarkup(rows)
 
 def get_snipe_denominations_keyboard(platform: str = "rooter", denominations: List[int] = None) -> InlineKeyboardMarkup:
-    """Keyboard to pick voucher denomination for Auto-Sniper (₹4,000 Exclusively)."""
+    """Keyboard to pick voucher denomination for Auto-Sniper."""
     rows = [
         [
-            InlineKeyboardButton(f"🎯 Auto-Snipe ₹{config.TARGET_DENOMINATION:,} PlayStation Card", callback_data=f"snipe_denom:rooter:{config.TARGET_DENOMINATION}"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹4,000 Card (Strict 4K)", callback_data="snipe_denom:rooter:4000"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 Card (Strict 1K)", callback_data="snipe_denom:rooter:1000"),
+        ],
+        [
+            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (₹1K / ₹4K)", callback_data="snipe_denom:rooter:0"),
         ],
         [
             InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main_menu"),

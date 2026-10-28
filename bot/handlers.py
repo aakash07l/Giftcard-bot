@@ -4,6 +4,7 @@ Uses HTML ParseMode for ultra-stable, error-free formatting.
 Supports environment credentials (ROOTER_AUTH_TOKEN) and interactive flows.
 """
 
+import os
 import html
 import asyncio
 import logging
@@ -395,17 +396,17 @@ async def confirm_buy_execution(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=get_main_menu_keyboard(),
             )
             # Send confirmation screenshot if available
-            shot_file = result.error_screenshot
-            if shot_file and os.path.exists(shot_file):
-                try:
+            try:
+                shot_file = result.error_screenshot
+                if shot_file and os.path.exists(shot_file):
                     with open(shot_file, "rb") as photo:
                         await context.bot.send_photo(
                             chat_id=update.effective_chat.id,
                             photo=photo,
                             caption=f"📸 Order proof for {prod_name} on {plat_name}",
                         )
-                except Exception as ex:
-                    logger.debug(f"Could not dispatch screenshot: {ex}")
+            except Exception as ex:
+                logger.debug(f"Could not dispatch screenshot: {ex}")
         else:
             # Capture error screenshot for inspection
             screenshot_path = result.error_screenshot or await browser_manager.capture_screenshot(page, name_prefix=f"err_{platform}")
@@ -585,28 +586,32 @@ async def run_sniper_loop(
                     target_d = None
                     target_q = 1
 
-                    if bal > 0:
-                        # High-to-low priority: 5000 -> 4000 -> 3000 -> 2000 -> 1000
-                        for cand_d in available_denominations:
-                            if cand_d <= bal:
-                                target_d = cand_d
-                                affordable_q = int(bal // cand_d)
-                                target_q = min(affordable_q, 2)  # Max 2 per order
-                                break
+                    if denomination > 0:
+                        # STRICT DENOMINATION MODE: e.g. /snipe 4000 or /snipe 1000
+                        # Strictly buys only the requested denomination!
+                        if denomination in available_denominations:
+                            if bal >= denomination or bal == 0:
+                                target_d = denomination
+                                affordable_q = int(bal // denomination) if bal > 0 else 1
+                                target_q = min(max(affordable_q, 1), 2)
                     else:
-                        # Balance untracked: pick highest available denomination, quantity 1
-                        target_d = available_denominations[0] if available_denominations else 1000
-                        target_q = 1
+                        # ANY IN-STOCK MODE: "jo amount aara h vhi buy ho"
+                        for cand_d in available_denominations:
+                            if bal >= cand_d or bal == 0:
+                                target_d = cand_d
+                                affordable_q = int(bal // cand_d) if bal > 0 else 1
+                                target_q = min(max(affordable_q, 1), 2)
+                                break
 
                     if target_d is not None:
                         order_tasks.append((acc, target_d, target_q))
                     else:
-                        min_avail = min(available_denominations) if available_denominations else 1000
-                        logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < lowest in-stock card ₹{min_avail:,}")
+                        req_target = denomination if denomination > 0 else (min(available_denominations) if available_denominations else 1000)
+                        logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < target card ₹{req_target:,}")
                         try:
                             await bot.send_message(
                                 chat_id=chat_id,
-                                text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{min_avail:,}.",
+                                text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{req_target:,}.",
                                 parse_mode=ParseMode.HTML,
                             )
                         except Exception:
@@ -708,17 +713,17 @@ async def run_sniper_loop(
                             reply_markup=get_main_menu_keyboard(),
                         )
 
-                        shot_file = result.error_screenshot
-                        if shot_file and os.path.exists(shot_file):
-                            try:
+                        try:
+                            shot_file = result.error_screenshot
+                            if shot_file and os.path.exists(shot_file):
                                 with open(shot_file, "rb") as photo:
                                     await bot.send_photo(
                                         chat_id=chat_id,
                                         photo=photo,
                                         caption=f"📸 Order proof for {acc_lbl}",
                                     )
-                            except Exception:
-                                pass
+                        except Exception as ex:
+                            logger.debug(f"Could not dispatch screenshot: {ex}")
                     else:
                         logger.warning(f"[Sniper] Purchase failed for {acc_lbl}: {result.message}")
                         await bot.send_message(

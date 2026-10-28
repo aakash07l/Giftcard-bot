@@ -224,23 +224,29 @@ class RooterService(BasePlatform):
             await self.dismiss_location_popup(page)
 
             try:
-                await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
+                await page.wait_for_selector("div:has-text('Wallet Code'), span:has-text('Wallet Code')", timeout=8000)
             except Exception:
                 pass
 
             await self.dismiss_location_popup(page)
 
-            # Highest to lowest priority: ₹5,000 down to ₹1,000
-            supported = [getattr(config, 'TARGET_DENOMINATION', 4000)]
-            for d in supported:
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
+            # Check supported denominations: 4000, 1000, 2000, 3000
+            for d in [4000, 1000, 2000, 3000]:
+                opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{d}\s*Wallet Code", re.IGNORECASE))
+                if await opt_locator.count() == 0:
+                    opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"{d}\s*Wallet Code", re.IGNORECASE))
 
-                if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
-                    if "out of stock" not in card_text.lower():
+                if await opt_locator.count() > 0:
+                    chip = opt_locator.first
+                    box_text = ""
+                    try:
+                        box_text = await chip.locator("xpath=..").inner_text()
+                    except Exception:
+                        pass
+                    chip_text = await chip.inner_text()
+                    full_text = (chip_text + " " + box_text).lower()
+
+                    if "out of stock" not in full_text and "sold out" not in full_text:
                         logger.info(f"🚨 [Rooter] In-stock candidate card found: ₹{d}!")
                         in_stock_list.append(d)
         except Exception as e:
@@ -249,7 +255,7 @@ class RooterService(BasePlatform):
         return in_stock_list
 
     async def find_available_playstation_denomination(self, page: Page) -> Optional[int]:
-        """Finds the highest PlayStation denomination currently in stock on Rooter (₹5k -> ₹1k)."""
+        """Finds the highest PlayStation denomination currently in stock on Rooter (₹4k -> ₹1k)."""
         denoms = await self.get_in_stock_playstation_denominations(page)
         return denoms[0] if denoms else None
 
@@ -291,43 +297,62 @@ class RooterService(BasePlatform):
             # B. PlayStation Gift Cards (₹1,000 to ₹5,000)
             else:
                 try:
-                    await page.wait_for_selector("div:has-text('Wallet Code')", timeout=8000)
+                    await page.wait_for_selector("div:has-text('Wallet Code'), span:has-text('Wallet Code')", timeout=8000)
                 except Exception:
                     pass
 
                 await self.dismiss_location_popup(page)
 
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+                opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
+                if await opt_locator.count() == 0:
+                    opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
 
-                if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
+                if await opt_locator.count() > 0:
+                    chip = opt_locator.first
+                    box_text = ""
+                    try:
+                        box_text = await chip.locator("xpath=..").inner_text()
+                    except Exception:
+                        pass
+                    chip_text = await chip.inner_text()
+                    full_text = (chip_text + " " + box_text).lower()
 
-                    # Check for out of stock indicator
-                    if "out of stock" in card_text.lower():
+                    # Check for out of stock indicator on chip or container
+                    if "out of stock" in full_text or "sold out" in full_text:
                         logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
                         return False
 
-                    # Click to select denomination with force=True and short timeout
+                    # Click to select denomination with force=True
                     try:
-                        await target_card.click(force=True, timeout=2000)
+                        await chip.click(force=True, timeout=2000)
                     except Exception:
                         try:
-                            await target_card.dispatch_event("click")
+                            await chip.dispatch_event("click")
                         except Exception:
                             pass
-                    await page.wait_for_timeout(300)
+                    await page.wait_for_timeout(400)
 
                     # Check bottom action button
                     try:
-                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=4000)
+                        bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=4000)
                         if bottom_btn:
                             btn_text = await bottom_btn.inner_text()
-                            if "out of stock" not in btn_text.lower():
-                                logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
-                                return True
+                            if "out of stock" in btn_text.lower():
+                                return False
+
+                            # Verify price on button matches target denomination
+                            match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
+                            if match_price:
+                                btn_val = float(match_price.group(1).replace(",", ""))
+                                if denomination == 4000 and btn_val < 3000:
+                                    logger.warning(f"[Rooter] Strict Check: ₹4,000 clicked but button shows ₹{btn_val} (1K default active). Not in stock.")
+                                    return False
+                                if denomination == 1000 and btn_val > 2500:
+                                    logger.warning(f"[Rooter] Strict Check: ₹1,000 clicked but button shows ₹{btn_val}.")
+                                    return False
+
+                            logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
+                            return True
                     except Exception:
                         pass
 
@@ -369,41 +394,89 @@ class RooterService(BasePlatform):
                 # Default selection on Google Play product page is already ₹10
                 pass
             else:
-                denom_opt = page.locator("div").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
-                if await denom_opt.count() == 0:
-                    denom_opt = page.locator("div").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+                try:
+                    await page.wait_for_selector("div:has-text('Wallet Code'), span:has-text('Wallet Code')", timeout=8000)
+                except Exception:
+                    pass
+                await self.dismiss_location_popup(page)
 
-                if await denom_opt.count() > 0:
-                    target_card = denom_opt.last
-                    card_text = await target_card.inner_text()
-                    if "out of stock" in card_text.lower():
-                        return PurchaseResult(
-                            success=False,
-                            platform="rooter",
-                            denomination=denomination,
-                            quantity=quantity,
-                            account_label=account_label,
-                            message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock! Start /snipe {denomination} to automatically grab it the second it restocks.",
-                        )
+                opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE))
+                if await opt_locator.count() == 0:
+                    opt_locator = page.locator("div, span, p").filter(has_text=re.compile(rf"{denomination}\s*Wallet Code", re.IGNORECASE))
+
+                if await opt_locator.count() == 0:
+                    return PurchaseResult(
+                        success=False,
+                        platform="rooter",
+                        denomination=denomination,
+                        quantity=quantity,
+                        account_label=account_label,
+                        message=f"Rooter {prod_name} ₹{denomination:,} option card was not found on page.",
+                    )
+
+                chip = opt_locator.first
+                box_text = ""
+                try:
+                    box_text = await chip.locator("xpath=..").inner_text()
+                except Exception:
+                    pass
+                full_text = (await chip.inner_text() + " " + box_text).lower()
+
+                if "out of stock" in full_text or "sold out" in full_text:
+                    return PurchaseResult(
+                        success=False,
+                        platform="rooter",
+                        denomination=denomination,
+                        quantity=quantity,
+                        account_label=account_label,
+                        message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock!",
+                    )
+
+                try:
+                    await chip.click(force=True, timeout=2500)
+                except Exception:
                     try:
-                        await target_card.click(force=True, timeout=2500)
+                        await chip.dispatch_event("click")
                     except Exception:
-                        try:
-                            await target_card.dispatch_event("click")
-                        except Exception:
-                            pass
-                    await page.wait_for_timeout(300)
+                        pass
+                await page.wait_for_timeout(400)
 
-                    # Increment quantity if quantity > 1 (e.g. 2 per order)
-                    if quantity > 1:
-                        try:
-                            for _ in range(quantity - 1):
-                                plus_btn = page.locator("button:has-text('+'), div[class*='qty'] button:has-text('+'), div[class*='quantity'] button:has-text('+'), [aria-label*='increase']").first
-                                if await plus_btn.is_visible(timeout=1000):
-                                    await plus_btn.click(force=True, timeout=1000)
-                                    await page.wait_for_timeout(200)
-                        except Exception as qe:
-                            logger.debug(f"Could not increment quantity: {qe}")
+                # STRICT VERIFICATION: Verify bottom button payable amount matches target denomination
+                verify_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay')").first
+                if await verify_btn.is_visible(timeout=3000):
+                    btn_text = await verify_btn.inner_text()
+                    match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
+                    if match_price:
+                        btn_val = float(match_price.group(1).replace(",", ""))
+                        if denomination == 4000 and btn_val < 3000:
+                            return PurchaseResult(
+                                success=False,
+                                platform="rooter",
+                                denomination=denomination,
+                                quantity=quantity,
+                                account_label=account_label,
+                                message=f"ABORTED STRICT SAFETY: Target was ₹4,000, but Rooter page showed ₹{btn_val:,.0f} (default ₹1,000 card). Accidental 1K purchase was blocked."
+                            )
+                        if denomination == 1000 and btn_val > 2500:
+                            return PurchaseResult(
+                                success=False,
+                                platform="rooter",
+                                denomination=denomination,
+                                quantity=quantity,
+                                account_label=account_label,
+                                message=f"ABORTED STRICT SAFETY: Target was ₹1,000, but Rooter page showed ₹{btn_val:,.0f}."
+                            )
+
+                # Increment quantity if quantity > 1 (e.g. 2 per order)
+                if quantity > 1:
+                    try:
+                        for _ in range(quantity - 1):
+                            plus_btn = page.locator("button:has-text('+'), div[class*='qty'] button:has-text('+'), div[class*='quantity'] button:has-text('+'), [aria-label*='increase']").first
+                            if await plus_btn.is_visible(timeout=1000):
+                                await plus_btn.click(force=True, timeout=1000)
+                                await page.wait_for_timeout(200)
+                    except Exception as qe:
+                        logger.debug(f"Could not increment quantity: {qe}")
 
             # 2. Check if main action button is disabled / Out of Stock
             await self.dismiss_location_popup(page)
