@@ -353,14 +353,39 @@ class RooterService(BasePlatform):
                         logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
                         return False
 
-                    # Click to select denomination with force=True
+                    # Select the exact card button container for this denomination
                     try:
-                        await chip.click(force=True, timeout=2000)
+                        await page.evaluate(f"""() => {{
+                            const all = Array.from(document.querySelectorAll('*'));
+                            const leaf = all.find(el => {{
+                                const t = (el.innerText || el.textContent || '').trim();
+                                return /Rs\\.?\\s*{denomination}\\s*Wallet Code/i.test(t) && !/(?:1000|2000|3000|5000)\\s*Wallet Code/i.test(t);
+                            }});
+                            if (leaf) {{
+                                const cardBox = leaf.closest('div[class*="border"], div[class*="rounded"], div[class*="cursor"], button') || leaf.parentElement;
+                                if (cardBox) {{
+                                    cardBox.scrollIntoView({{ block: 'center' }});
+                                    cardBox.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true }}));
+                                    cardBox.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true }}));
+                                    cardBox.click();
+                                }}
+                            }}
+                        }}""")
                     except Exception:
-                        try:
-                            await chip.dispatch_event("click")
-                        except Exception:
-                            pass
+                        pass
+
+                    try:
+                        other_denoms = [str(x) for x in (1000, 2000, 3000, 4000, 5000) if x != denomination]
+                        neg_pattern = rf"Rs\.?\s*(?:{'|'.join(other_denoms)})\s*Wallet Code"
+                        specific_box = page.locator("div, button").filter(
+                            has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE)
+                        ).filter(
+                            has_not_text=re.compile(neg_pattern, re.IGNORECASE)
+                        ).first
+                        if await specific_box.count() > 0:
+                            await specific_box.click(force=True, timeout=2000)
+                    except Exception:
+                        pass
                     await page.wait_for_timeout(400)
 
                     # Check bottom action button
@@ -483,14 +508,42 @@ class RooterService(BasePlatform):
                         message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock!",
                     )
 
+                # Select the exact card button container for this denomination
                 try:
-                    await chip.click(force=True, timeout=2500)
+                    await page.evaluate(f"""() => {{
+                        const all = Array.from(document.querySelectorAll('*'));
+                        const leaf = all.find(el => {{
+                            const t = (el.innerText || el.textContent || '').trim();
+                            return /Rs\\.?\\s*{denomination}\\s*Wallet Code/i.test(t) && !/(?:1000|2000|3000|5000)\\s*Wallet Code/i.test(t);
+                        }});
+                        if (leaf) {{
+                            const cardBox = leaf.closest('div[class*="border"], div[class*="rounded"], div[class*="cursor"], button') || leaf.parentElement;
+                            if (cardBox) {{
+                                cardBox.scrollIntoView({{ block: 'center' }});
+                                cardBox.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true }}));
+                                cardBox.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true }}));
+                                cardBox.click();
+                            }}
+                        }}
+                    }}""")
+                except Exception as ce:
+                    logger.debug(f"Card click evaluation notice: {ce}")
+
+                # Also perform native Playwright click on the specific card box (excluding multi-card parent containers)
+                try:
+                    other_denoms = [str(x) for x in (1000, 2000, 3000, 4000, 5000) if x != denomination]
+                    neg_pattern = rf"Rs\.?\s*(?:{'|'.join(other_denoms)})\s*Wallet Code"
+                    specific_box = page.locator("div, button").filter(
+                        has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE)
+                    ).filter(
+                        has_not_text=re.compile(neg_pattern, re.IGNORECASE)
+                    ).first
+
+                    if await specific_box.count() > 0:
+                        await specific_box.click(force=True, timeout=2000)
                 except Exception:
-                    try:
-                        await chip.dispatch_event("click")
-                    except Exception:
-                        pass
-                await page.wait_for_timeout(400)
+                    pass
+                await page.wait_for_timeout(500)
 
                 # STRICT VERIFICATION: Verify bottom button payable amount matches target denomination
                 verify_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay')").first
