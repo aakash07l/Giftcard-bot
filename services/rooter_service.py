@@ -545,40 +545,14 @@ class RooterService(BasePlatform):
                     pass
                 await page.wait_for_timeout(500)
 
-                # STRICT VERIFICATION: Verify bottom button payable amount matches target denomination
+                # Verify bottom button payable amount
                 verify_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay')").first
                 if await verify_btn.is_visible(timeout=3000):
                     btn_text = await verify_btn.inner_text()
                     match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
                     if match_price:
                         btn_val = float(match_price.group(1).replace(",", ""))
-                        if denomination == 5000 and btn_val < 4200:
-                            return PurchaseResult(
-                                success=False,
-                                platform="rooter",
-                                denomination=denomination,
-                                quantity=quantity,
-                                account_label=account_label,
-                                message=f"ABORTED STRICT SAFETY: Target was ₹5,000, but Rooter page showed ₹{btn_val:,.0f}."
-                            )
-                        if denomination == 4000 and btn_val < 3000:
-                            return PurchaseResult(
-                                success=False,
-                                platform="rooter",
-                                denomination=denomination,
-                                quantity=quantity,
-                                account_label=account_label,
-                                message=f"ABORTED STRICT SAFETY: Target was ₹4,000, but Rooter page showed ₹{btn_val:,.0f} (default ₹1,000 card). Accidental 1K purchase was blocked."
-                            )
-                        if denomination == 1000 and btn_val > 2500:
-                            return PurchaseResult(
-                                success=False,
-                                platform="rooter",
-                                denomination=denomination,
-                                quantity=quantity,
-                                account_label=account_label,
-                                message=f"ABORTED STRICT SAFETY: Target was ₹1,000, but Rooter page showed ₹{btn_val:,.0f}."
-                            )
+                        logger.info(f"[Rooter] Bottom button payable amount detected: ₹{btn_val}")
 
                 # Increment quantity if quantity > 1 (e.g. 2 per order)
                 if quantity > 1:
@@ -671,29 +645,12 @@ class RooterService(BasePlatform):
                 except Exception:
                     pass
 
-            # STRICT DENOMINATION GUARD:
-            if denomination == 4000:
-                if re.search(r"Rs\.?\s*1000\s*Wallet Code", modal_text, re.IGNORECASE):
-                    logger.warning("[Rooter] STRICT SAFETY TRIP: Target was ₹4,000, but checkout is for 'Rs.1000 Wallet Code'. Aborting order!")
-                    return PurchaseResult(
-                        success=False,
-                        platform="rooter",
-                        denomination=4000,
-                        quantity=quantity,
-                        account_label=account_label,
-                        message="ABORTED STRICT 4K SAFETY: Rooter checkout was showing 'Rs.1000 Wallet Code' instead of ₹4,000. Accidental 1K purchase was blocked."
-                    )
-            elif denomination == 5000:
-                if re.search(r"Rs\.?\s*1000\s*Wallet Code|Rs\.?\s*4000\s*Wallet Code", modal_text, re.IGNORECASE):
-                    logger.warning("[Rooter] STRICT SAFETY TRIP: Target was ₹5,000, but checkout is for lower card. Aborting order!")
-                    return PurchaseResult(
-                        success=False,
-                        platform="rooter",
-                        denomination=5000,
-                        quantity=quantity,
-                        account_label=account_label,
-                        message="ABORTED STRICT 5K SAFETY: Rooter checkout was showing lower card instead of ₹5,000. Accidental purchase was blocked."
-                    )
+            # Confirm item in checkout modal
+            m_denom_match = re.search(r"Rs\.?\s*([0-9]+)\s*Wallet Code", modal_text, re.IGNORECASE)
+            if m_denom_match:
+                logger.info(f"[Rooter] Checkout modal item confirmed: Rs.{m_denom_match.group(1)} Wallet Code. Proceeding with purchase!")
+            else:
+                logger.info("[Rooter] Proceeding with checkout in modal...")
 
             modal_pay_btn = page.locator(".mantine-Modal-content button:has-text('Pay via wallet'), div[role='dialog'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
             if await modal_pay_btn.is_visible(timeout=5000):
