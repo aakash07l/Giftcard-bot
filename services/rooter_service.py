@@ -238,15 +238,31 @@ class RooterService(BasePlatform):
 
                 if await opt_locator.count() > 0:
                     chip = opt_locator.first
-                    box_text = ""
-                    try:
-                        box_text = await chip.locator("xpath=..").inner_text()
-                    except Exception:
-                        pass
-                    chip_text = await chip.inner_text()
-                    full_text = (chip_text + " " + box_text).lower()
+                    # Deep DOM check: evaluate up the card container to verify if it is out of stock / disabled
+                    is_out = await chip.evaluate("""el => {
+                        let curr = el;
+                        for (let i = 0; i < 4; i++) {
+                            if (!curr) break;
+                            const txt = (curr.innerText || '').toLowerCase();
+                            if ((txt.match(/wallet code/gi) || []).length > 1) {
+                                break;
+                            }
+                            if (txt.includes('out of stock') || txt.includes('sold out')) {
+                                return true;
+                            }
+                            if (curr.getAttribute('disabled') !== null || curr.getAttribute('aria-disabled') === 'true') {
+                                return true;
+                            }
+                            const cls = curr.className || '';
+                            if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                                return true;
+                            }
+                            curr = curr.parentElement;
+                        }
+                        return false;
+                    }""")
 
-                    if "out of stock" not in full_text and "sold out" not in full_text:
+                    if not is_out:
                         logger.info(f"🚨 [Rooter] In-stock candidate card found: ₹{d}!")
                         in_stock_list.append(d)
         except Exception as e:
@@ -309,16 +325,31 @@ class RooterService(BasePlatform):
 
                 if await opt_locator.count() > 0:
                     chip = opt_locator.first
-                    box_text = ""
-                    try:
-                        box_text = await chip.locator("xpath=..").inner_text()
-                    except Exception:
-                        pass
-                    chip_text = await chip.inner_text()
-                    full_text = (chip_text + " " + box_text).lower()
+                    # Deep DOM check: evaluate up the card container to verify if it is out of stock / disabled
+                    is_out = await chip.evaluate("""el => {
+                        let curr = el;
+                        for (let i = 0; i < 4; i++) {
+                            if (!curr) break;
+                            const txt = (curr.innerText || '').toLowerCase();
+                            if ((txt.match(/wallet code/gi) || []).length > 1) {
+                                break;
+                            }
+                            if (txt.includes('out of stock') || txt.includes('sold out')) {
+                                return true;
+                            }
+                            if (curr.getAttribute('disabled') !== null || curr.getAttribute('aria-disabled') === 'true') {
+                                return true;
+                            }
+                            const cls = curr.className || '';
+                            if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                                return true;
+                            }
+                            curr = curr.parentElement;
+                        }
+                        return false;
+                    }""")
 
-                    # Check for out of stock indicator on chip or container
-                    if "out of stock" in full_text or "sold out" in full_text:
+                    if is_out:
                         logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
                         return False
 
@@ -418,14 +449,31 @@ class RooterService(BasePlatform):
                     )
 
                 chip = opt_locator.first
-                box_text = ""
-                try:
-                    box_text = await chip.locator("xpath=..").inner_text()
-                except Exception:
-                    pass
-                full_text = (await chip.inner_text() + " " + box_text).lower()
+                # Deep DOM check: evaluate up the card container to verify if it is out of stock / disabled
+                is_out = await chip.evaluate("""el => {
+                    let curr = el;
+                    for (let i = 0; i < 4; i++) {
+                        if (!curr) break;
+                        const txt = (curr.innerText || '').toLowerCase();
+                        if ((txt.match(/wallet code/gi) || []).length > 1) {
+                            break;
+                        }
+                        if (txt.includes('out of stock') || txt.includes('sold out')) {
+                            return true;
+                        }
+                        if (curr.getAttribute('disabled') !== null || curr.getAttribute('aria-disabled') === 'true') {
+                            return true;
+                        }
+                        const cls = curr.className || '';
+                        if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                            return true;
+                        }
+                        curr = curr.parentElement;
+                    }
+                    return false;
+                }""")
 
-                if "out of stock" in full_text or "sold out" in full_text:
+                if is_out:
                     return PurchaseResult(
                         success=False,
                         platform="rooter",
@@ -555,6 +603,45 @@ class RooterService(BasePlatform):
                     await page.wait_for_timeout(1500)
 
             # 3. Click the 'Pay via wallet' button INSIDE the Delivery Details modal
+            # First, inspect the Delivery Details modal text to confirm the exact item being bought!
+            modal_text = ""
+            try:
+                delivery_modal_elem = page.locator(".mantine-Modal-content, div[role='dialog']").first
+                if await delivery_modal_elem.is_visible(timeout=1000):
+                    modal_text = await delivery_modal_elem.inner_text()
+            except Exception:
+                pass
+
+            if not modal_text:
+                try:
+                    modal_text = await page.locator("body").inner_text()
+                except Exception:
+                    pass
+
+            # STRICT DENOMINATION GUARD:
+            if denomination == 4000:
+                if re.search(r"Rs\.?\s*1000\s*Wallet Code", modal_text, re.IGNORECASE):
+                    logger.warning("[Rooter] STRICT SAFETY TRIP: Target was ₹4,000, but checkout is for 'Rs.1000 Wallet Code'. Aborting order!")
+                    return PurchaseResult(
+                        success=False,
+                        platform="rooter",
+                        denomination=4000,
+                        quantity=quantity,
+                        account_label=account_label,
+                        message="ABORTED STRICT 4K SAFETY: Rooter checkout was showing 'Rs.1000 Wallet Code' instead of ₹4,000. Accidental 1K purchase was blocked."
+                    )
+            elif denomination == 5000:
+                if re.search(r"Rs\.?\s*1000\s*Wallet Code|Rs\.?\s*4000\s*Wallet Code", modal_text, re.IGNORECASE):
+                    logger.warning("[Rooter] STRICT SAFETY TRIP: Target was ₹5,000, but checkout is for lower card. Aborting order!")
+                    return PurchaseResult(
+                        success=False,
+                        platform="rooter",
+                        denomination=5000,
+                        quantity=quantity,
+                        account_label=account_label,
+                        message="ABORTED STRICT 5K SAFETY: Rooter checkout was showing lower card instead of ₹5,000. Accidental purchase was blocked."
+                    )
+
             modal_pay_btn = page.locator(".mantine-Modal-content button:has-text('Pay via wallet'), div[role='dialog'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
             if await modal_pay_btn.is_visible(timeout=5000):
                 if progress_callback:
@@ -704,17 +791,28 @@ class RooterService(BasePlatform):
             all_found_codes = re.findall(r"(?:Code\s*#?\d*|Voucher|Key|Redeem\s*Code|Coupon\s*Codes?)[\s:\n]+([A-Z0-9-]{10,25})", active_body, re.IGNORECASE)
             codes_list = list(dict.fromkeys(all_found_codes)) if all_found_codes else ([code] if code else [])
 
+            # Extract actual bought denomination from confirmation text
+            real_bought_denom = denomination
+            actual_denom_match = re.search(r"Rs\.?\s*([0-9]+)\s*Wallet Code", active_body, re.IGNORECASE)
+            if actual_denom_match:
+                try:
+                    parsed_denom = int(actual_denom_match.group(1))
+                    if parsed_denom in (1000, 2000, 3000, 4000, 5000):
+                        real_bought_denom = parsed_denom
+                except Exception:
+                    pass
+
             return PurchaseResult(
                 success=True,
                 platform="rooter",
-                denomination=denomination,
+                denomination=real_bought_denom,
                 quantity=quantity,
                 account_label=account_label,
                 voucher_code=code,
                 voucher_pin=pin,
                 codes=codes_list,
                 order_id=order_id,
-                receipt_summary=f"Rooter {prod_name} ₹{denomination:,} x{quantity}",
+                receipt_summary=f"Rooter {prod_name} ₹{real_bought_denom:,} x{quantity}",
                 message=f"{prod_name} (x{quantity}) successfully purchased on Rooter with wallet balance!",
                 error_screenshot=shot_path,
                 simulation=False,

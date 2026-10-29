@@ -579,6 +579,14 @@ async def run_sniper_loop(
                         "wallet_balance": 0.0,
                     }]
 
+                ROOTER_CARD_FEES = {
+                    1000: 1106.0,
+                    2000: 2210.0,
+                    3000: 3310.0,
+                    4000: 4409.0,
+                    5000: 5515.0,
+                }
+
                 order_tasks = []
                 for acc in active_accounts:
                     bal = float(acc.get("wallet_balance", 0.0))
@@ -590,16 +598,18 @@ async def run_sniper_loop(
                         # STRICT DENOMINATION MODE: e.g. /snipe 4000 or /snipe 1000
                         # Strictly buys only the requested denomination!
                         if denomination in available_denominations:
-                            if bal >= denomination or bal == 0:
+                            unit_cost = ROOTER_CARD_FEES.get(denomination, float(denomination) * 1.102)
+                            if bal >= unit_cost or bal == 0:
                                 target_d = denomination
-                                affordable_q = int(bal // denomination) if bal > 0 else 1
+                                affordable_q = int(bal // unit_cost) if bal > 0 else 1
                                 target_q = min(max(affordable_q, 1), 2)
                     else:
                         # ANY IN-STOCK MODE: "jo amount aara h vhi buy ho"
                         for cand_d in available_denominations:
-                            if bal >= cand_d or bal == 0:
+                            unit_cost = ROOTER_CARD_FEES.get(cand_d, float(cand_d) * 1.102)
+                            if bal >= unit_cost or bal == 0:
                                 target_d = cand_d
-                                affordable_q = int(bal // cand_d) if bal > 0 else 1
+                                affordable_q = int(bal // unit_cost) if bal > 0 else 1
                                 target_q = min(max(affordable_q, 1), 2)
                                 break
 
@@ -607,11 +617,12 @@ async def run_sniper_loop(
                         order_tasks.append((acc, target_d, target_q))
                     else:
                         req_target = denomination if denomination > 0 else (min(available_denominations) if available_denominations else 1000)
-                        logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < target card ₹{req_target:,}")
+                        req_cost = ROOTER_CARD_FEES.get(req_target, float(req_target) * 1.102)
+                        logger.info(f"[Sniper] Account {acc_label} skipped: Balance ₹{bal:,.0f} < target card ₹{req_target:,} (₹{req_cost:,.0f} with fees)")
                         try:
                             await bot.send_message(
                                 chat_id=chat_id,
-                                text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for in-stock card ₹{req_target:,}.",
+                                text=f"⚠️ <b>{html.escape(acc_label)} Skipped:</b> Balance ₹{bal:,.0f} is insufficient for card ₹{req_target:,} (Total: ₹{req_cost:,.0f}).",
                                 parse_mode=ParseMode.HTML,
                             )
                         except Exception:
@@ -678,9 +689,12 @@ async def run_sniper_loop(
                     if result.success:
                         any_success = True
                         sim_badge = " [SIMULATED TEST]" if result.simulation else ""
-                        total_paid = d_val * q_val
+                        real_denom = result.denomination or d_val
+                        fee_per_card = ROOTER_CARD_FEES.get(real_denom, float(real_denom) * 1.102)
+                        total_paid = fee_per_card * result.quantity
                         account_manager.deduct_balance(acc_data.get("id"), total_paid)
                         rem_bal = acc_data.get("wallet_balance", 0.0)
+                        asyncio.create_task(account_manager.sync_all_balances())
 
                         codes_display = ""
                         if result.codes and len(result.codes) > 1:
@@ -697,7 +711,7 @@ async def run_sniper_loop(
                             f"👤 <b>Account:</b> {acc_lbl}\n"
                             f"🎯 <b>Platform:</b> {plat_name}\n"
                             f"📦 <b>Item:</b> PlayStation Gift Card (Qty: {result.quantity})\n"
-                            f"💰 <b>Denomination:</b> ₹{result.denomination:,} each (Total Paid: ₹{total_paid:,})\n"
+                            f"💰 <b>Denomination:</b> ₹{real_denom:,} each (Total Paid: ₹{total_paid:,.0f})\n"
                             f"🔑 <b>Voucher Code(s):</b>\n{codes_display}\n"
                             f"🔒 <b>PIN / Key:</b> <code>{v_pin}</code>\n"
                             f"🧾 <b>Order ID:</b> <code>{o_id}</code>\n"
