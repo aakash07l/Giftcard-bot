@@ -536,18 +536,22 @@ async def run_sniper_loop(
                         available_denominations = [denomination]
             except Exception as e:
                 logger.warning(f"[Sniper #{attempts}] Error during stock check: {e}")
-                if attempts == 1:
+                if attempts == 1 or attempts % 10 == 0:
                     try:
                         await bot.send_message(
                             chat_id=chat_id,
-                            text=f"⚠️ Rooter page notice: <code>{html.escape(str(e)[:100])}</code>. Continuing check...",
+                            text=(
+                                f"⚠️ <b>Rooter Stock Check Notice (Check #{attempts}):</b>\n"
+                                f"<code>{html.escape(str(e)[:120])}</code>\n"
+                                f"<i>Retrying in next cycle...</i>"
+                            ),
                             parse_mode=ParseMode.HTML,
                         )
                     except Exception:
                         pass
 
             if attempts == 1 and not is_in_stock:
-                status_desc = "PlayStation Gift Cards (₹1,000, ₹2,000, ₹3,000, ₹5,000)" if is_any_mode else f"{prod_name} ₹{denomination:,}"
+                status_desc = "PlayStation Gift Cards (₹1,000, ₹2,000, ₹3,000, ₹4,000, ₹5,000)" if is_any_mode else f"{prod_name} ₹{denomination:,}"
                 try:
                     await bot.send_message(
                         chat_id=chat_id,
@@ -897,7 +901,7 @@ async def launch_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE, plat
     mode_text = "🧪 Simulation (Dry Run)" if config.SIMULATION_MODE else "⚡ Live Purchasing (Real Checkout)"
     if denomination == 0:
         prod_name = "⚡ Any PlayStation Card (₹1,000 to ₹5,000)"
-        note_text = "✅ <b>Multi-Card Restock Monitor Active:</b> Rooter par ₹1,000, ₹2,000, ₹3,000 ya ₹5,000 me se jo bhi denomination pehle stock me aayega, bot usko turant 1 second me buy kar lega!"
+        note_text = "✅ <b>Multi-Card Restock Monitor Active:</b> Rooter par ₹1,000, ₹2,000, ₹3,000, ₹4,000 ya ₹5,000 me se jo bhi denomination pehle stock me aayega, bot usko turant 1 second me buy kar lega!"
     else:
         prod_name = f"PlayStation ₹{denomination:,}"
         note_text = f"✅ <b>24/7 Restock Monitor Active:</b> Jaise hi PlayStation voucher stock me aayega, bot bina kisi delay ke turant buy kar lega aur voucher code aapko yahan message kar dega."

@@ -254,7 +254,7 @@ class RooterService(BasePlatform):
                                 return true;
                             }
                             const cls = curr.className || '';
-                            if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                            if (typeof cls === 'string' && (cls.includes('cursor-not-allowed') || /\bdisabled\b/.test(cls))) {
                                 return true;
                             }
                             curr = curr.parentElement;
@@ -341,7 +341,7 @@ class RooterService(BasePlatform):
                                 return true;
                             }
                             const cls = curr.className || '';
-                            if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                            if (typeof cls === 'string' && (cls.includes('cursor-not-allowed') || /\bdisabled\b/.test(cls))) {
                                 return true;
                             }
                             curr = curr.parentElement;
@@ -394,28 +394,18 @@ class RooterService(BasePlatform):
                         if bottom_btn:
                             btn_text = await bottom_btn.inner_text()
                             if "out of stock" in btn_text.lower():
+                                logger.info(f"[Rooter] Bottom button indicates Out of Stock for ₹{denomination}.")
                                 return False
-
-                            # Verify price on button matches target denomination
-                            match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
-                            if match_price:
-                                btn_val = float(match_price.group(1).replace(",", ""))
-                                if denomination == 5000 and btn_val < 4200:
-                                    logger.warning(f"[Rooter] Strict Check: ₹5,000 clicked but button shows ₹{btn_val}.")
-                                    return False
-                                if denomination == 4000 and btn_val < 3000:
-                                    logger.warning(f"[Rooter] Strict Check: ₹4,000 clicked but button shows ₹{btn_val} (1K default active). Not in stock.")
-                                    return False
-                                if denomination == 1000 and btn_val > 2500:
-                                    logger.warning(f"[Rooter] Strict Check: ₹1,000 clicked but button shows ₹{btn_val}.")
-                                    return False
 
                             logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} button is active ({btn_text})!")
                             return True
                     except Exception:
                         pass
 
-                    return False
+                    # If bottom button check timed out or button text didn't explicitly say Out of Stock,
+                    # but card chip is confirmed present and not disabled:
+                    logger.info(f"🚨 [Rooter] IN STOCK: PlayStation ₹{denomination} card option confirmed available!")
+                    return True
 
                 logger.warning(f"[Rooter] Could not locate option card for ₹{denomination}")
                 return False
@@ -490,7 +480,7 @@ class RooterService(BasePlatform):
                             return true;
                         }
                         const cls = curr.className || '';
-                        if (typeof cls === 'string' && (cls.includes('opacity-') || cls.includes('disabled') || cls.includes('cursor-not-allowed'))) {
+                        if (typeof cls === 'string' && (cls.includes('cursor-not-allowed') || /\bdisabled\b/.test(cls))) {
                             return true;
                         }
                         curr = curr.parentElement;
