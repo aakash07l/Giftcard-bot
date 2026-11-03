@@ -11,11 +11,12 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Builds the main menu dashboard keyboard."""
     keyboard = [
         [
+            InlineKeyboardButton("🎯 Auto-Snipe ₹5,000 PSN", callback_data="snipe_denom:rooter:5000"),
             InlineKeyboardButton("🎯 Auto-Snipe ₹4,000 PSN", callback_data="snipe_denom:rooter:4000"),
-            InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 PSN", callback_data="snipe_denom:rooter:1000"),
         ],
         [
-            InlineKeyboardButton("⚡ Auto-Snipe Any Stock (1K / 5K)", callback_data="snipe_denom:rooter:0"),
+            InlineKeyboardButton("🎯 Auto-Snipe ₹1,000 PSN", callback_data="snipe_denom:rooter:1000"),
+            InlineKeyboardButton("⚡ Auto-Snipe Any Stock", callback_data="snipe_denom:rooter:0"),
         ],
         [
             InlineKeyboardButton("👥 Manage Accounts (5-30 AC)", callback_data="accounts_view"),

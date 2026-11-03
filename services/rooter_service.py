@@ -275,6 +275,93 @@ class RooterService(BasePlatform):
         denoms = await self.get_in_stock_playstation_denominations(page)
         return denoms[0] if denoms else None
 
+    async def select_playstation_denomination(self, page: Page, denomination: int) -> bool:
+        """
+        Robustly selects the PlayStation card chip for the requested denomination on Rooter.
+        Uses React props onChange dispatch, native label click, and verifies the bottom button
+        or input checked state.
+        Retries up to 3 times, taking extra seconds to ensure React state updates cleanly.
+        """
+        for attempt in range(1, 4):
+            try:
+                # 1. Direct React & DOM selection inside the exact chip wrapper
+                selected = await page.evaluate("""(target) => {
+                    const wrappers = Array.from(document.querySelectorAll('div.styles_chipWrapper__gc2fX, div.mantine-Chip-root'));
+                    const reg = new RegExp('Rs\\.?\\s*' + target + '\\s*Wallet\\s*Code', 'i');
+                    const match = wrappers.find(w => reg.test(w.innerText || w.textContent || ''));
+                    if (!match) return false;
+
+                    const lbl = match.querySelector('label');
+                    const inp = match.querySelector('input[type="radio"]');
+
+                    if (lbl) {
+                        lbl.scrollIntoView({ block: 'center' });
+                        lbl.click();
+                    }
+                    if (inp) {
+                        inp.checked = true;
+                        const k = Object.keys(inp).find(key => key.startsWith('__reactProps'));
+                        if (k && inp[k] && inp[k].onChange) {
+                            inp[k].onChange({ target: inp, currentTarget: inp, preventDefault: () => {}, stopPropagation: () => {} });
+                        }
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    return true;
+                }""", denomination)
+
+                # 2. Native Playwright locator fallback
+                chip = page.locator("div.styles_chipWrapper__gc2fX, div.mantine-Chip-root").filter(
+                    has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE)
+                ).first
+                if await chip.count() > 0:
+                    lbl = chip.locator("label").first
+                    if await lbl.count() > 0:
+                        try:
+                            await lbl.click(force=True, timeout=1500)
+                        except Exception:
+                            pass
+
+                # Give React state extra seconds to update as requested
+                await page.wait_for_timeout(1000)
+
+                # 3. Verification: Check the action button price
+                btn = page.locator("button.styles_paymentBtn__TiXtN, button:has-text('Pay'), button:has-text('Buy Now'), button:has-text('Proceed')").first
+                if await btn.count() > 0 and await btn.is_visible():
+                    btn_text = (await btn.inner_text()).strip()
+                    m = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
+                    if m:
+                        val = float(m.group(1).replace(",", ""))
+                        if denomination == 5000 and val >= 4500:
+                            logger.info(f"[Rooter] Selection verified: ₹{denomination} active on button ({btn_text}).")
+                            return True
+                        elif denomination == 4000 and 3500 <= val <= 4900:
+                            logger.info(f"[Rooter] Selection verified: ₹{denomination} active on button ({btn_text}).")
+                            return True
+                        elif denomination == 3000 and 2500 <= val <= 3800:
+                            logger.info(f"[Rooter] Selection verified: ₹{denomination} active on button ({btn_text}).")
+                            return True
+                        elif denomination == 2000 and 1800 <= val <= 2600:
+                            logger.info(f"[Rooter] Selection verified: ₹{denomination} active on button ({btn_text}).")
+                            return True
+                        elif denomination == 1000 and val < 1800:
+                            logger.info(f"[Rooter] Selection verified: ₹{denomination} active on button ({btn_text}).")
+                            return True
+                        else:
+                            logger.warning(f"[Rooter] Selection mismatch (attempt {attempt}/3): Wanted ₹{denomination}, button shows ₹{val:,.0f} ({btn_text}). Waiting 1.5s to re-select...")
+                            await page.wait_for_timeout(1500)
+                            continue
+                    else:
+                        is_checked = await chip.locator("input[type='radio']").first.is_checked()
+                        if is_checked:
+                            return True
+            except Exception as e:
+                logger.warning(f"[Rooter] Error selecting ₹{denomination} (attempt {attempt}): {e}")
+                await page.wait_for_timeout(1000)
+
+        logger.warning(f"[Rooter] Could not strictly confirm selection for ₹{denomination} after 3 attempts.")
+        return False
+
     async def check_is_in_stock(self, page: Page, denomination: int) -> bool:
         """Accurate, denomination-specific check on Rooter product pages."""
         try:
@@ -353,42 +440,8 @@ class RooterService(BasePlatform):
                         logger.debug(f"[Rooter] ₹{denomination} card option is labeled Out of Stock.")
                         return False
 
-                    # Select the exact card button container for this denomination
-                    try:
-                        await page.evaluate(f"""() => {{
-                            const all = Array.from(document.querySelectorAll('*'));
-                            const leaf = all.find(el => {{
-                                const t = (el.innerText || el.textContent || '').trim();
-                                return /Rs\\.?\\s*{denomination}\\s*Wallet Code/i.test(t) && !/(?:1000|2000|3000|5000)\\s*Wallet Code/i.test(t);
-                            }});
-                            if (leaf) {{
-                                const cardBox = leaf.closest('div[class*="border"], div[class*="rounded"], div[class*="cursor"], button') || leaf.parentElement;
-                                if (cardBox) {{
-                                    cardBox.scrollIntoView({{ block: 'center' }});
-                                    cardBox.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true }}));
-                                    cardBox.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true }}));
-                                    cardBox.click();
-                                }}
-                            }}
-                        }}""")
-                    except Exception:
-                        pass
-
-                    try:
-                        other_denoms = [str(x) for x in (1000, 2000, 3000, 4000, 5000) if x != denomination]
-                        neg_pattern = rf"Rs\.?\s*(?:{'|'.join(other_denoms)})\s*Wallet Code"
-                        specific_box = page.locator("div, button").filter(
-                            has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE)
-                        ).filter(
-                            has_not_text=re.compile(neg_pattern, re.IGNORECASE)
-                        ).first
-                        if await specific_box.count() > 0:
-                            await specific_box.click(force=True, timeout=2000)
-                    except Exception:
-                        pass
-                    await page.wait_for_timeout(400)
-
-                    # Check bottom action button
+                    # Select the exact card chip for this denomination with React dispatch & validation
+                    await self.select_playstation_denomination(page, denomination)
                     try:
                         bottom_btn = await page.wait_for_selector("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay'), button:has-text('Out of Stock')", timeout=4000)
                         if bottom_btn:
@@ -498,53 +551,23 @@ class RooterService(BasePlatform):
                         message=f"Rooter {prod_name} ₹{denomination:,} is currently Out of Stock!",
                     )
 
-                # Select the exact card button container for this denomination
-                try:
-                    await page.evaluate(f"""() => {{
-                        const all = Array.from(document.querySelectorAll('*'));
-                        const leaf = all.find(el => {{
-                            const t = (el.innerText || el.textContent || '').trim();
-                            return /Rs\\.?\\s*{denomination}\\s*Wallet Code/i.test(t) && !/(?:1000|2000|3000|5000)\\s*Wallet Code/i.test(t);
-                        }});
-                        if (leaf) {{
-                            const cardBox = leaf.closest('div[class*="border"], div[class*="rounded"], div[class*="cursor"], button') || leaf.parentElement;
-                            if (cardBox) {{
-                                cardBox.scrollIntoView({{ block: 'center' }});
-                                cardBox.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true }}));
-                                cardBox.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true }}));
-                                cardBox.click();
-                            }}
-                        }}
-                    }}""")
-                except Exception as ce:
-                    logger.debug(f"Card click evaluation notice: {ce}")
-
-                # Also perform native Playwright click on the specific card box (excluding multi-card parent containers)
-                try:
-                    other_denoms = [str(x) for x in (1000, 2000, 3000, 4000, 5000) if x != denomination]
-                    neg_pattern = rf"Rs\.?\s*(?:{'|'.join(other_denoms)})\s*Wallet Code"
-                    specific_box = page.locator("div, button").filter(
-                        has_text=re.compile(rf"Rs\.?\s*{denomination}\s*Wallet Code", re.IGNORECASE)
-                    ).filter(
-                        has_not_text=re.compile(neg_pattern, re.IGNORECASE)
-                    ).first
-
-                    if await specific_box.count() > 0:
-                        await specific_box.click(force=True, timeout=2000)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(500)
-
-                # Verify bottom button payable amount
-                verify_btn = page.locator("button:has-text('Buy Now'), button:has-text('Proceed'), button:has-text('Pay via wallet'), button:has-text('Pay')").first
-                if await verify_btn.is_visible(timeout=3000):
-                    btn_text = await verify_btn.inner_text()
-                    match_price = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", btn_text, re.IGNORECASE)
-                    if match_price:
-                        btn_val = float(match_price.group(1).replace(",", ""))
-                        logger.info(f"[Rooter] Bottom button payable amount detected: ₹{btn_val}")
-
-                # Increment quantity if quantity > 1 (e.g. 2 per order)
+                # Select the exact card chip and verify button amount (takes extra seconds if needed for React)
+                select_ok = await self.select_playstation_denomination(page, denomination)
+                if not select_ok and denomination >= 2000:
+                    # Double check if bottom button is stuck on 1K default
+                    btn_chk = page.locator("button.styles_paymentBtn__TiXtN, button:has-text('Pay'), button:has-text('Buy Now'), button:has-text('Proceed')").first
+                    if await btn_chk.is_visible(timeout=2000):
+                        bt = await btn_chk.inner_text()
+                        m_btn = re.search(r"(?:Pay\s*₹?|₹\s*)([0-9,]+(?:\.[0-9]+)?)", bt, re.IGNORECASE)
+                        if m_btn and float(m_btn.group(1).replace(",", "")) < 1800:
+                            return PurchaseResult(
+                                success=False,
+                                platform="rooter",
+                                denomination=denomination,
+                                quantity=quantity,
+                                account_label=account_label,
+                                message=f"ABORTED: Button remained stuck on 1K default instead of ₹{denomination:,} ({bt.strip()}). Aborted to guarantee only requested denomination is bought.",
+                            )
                 if quantity > 1:
                     try:
                         for _ in range(quantity - 1):
@@ -637,12 +660,30 @@ class RooterService(BasePlatform):
 
             # Confirm item in checkout modal
             m_denom_match = re.search(r"Rs\.?\s*([0-9]+)\s*Wallet Code", modal_text, re.IGNORECASE)
-            if m_denom_match:
-                logger.info(f"[Rooter] Checkout modal item confirmed: Rs.{m_denom_match.group(1)} Wallet Code. Proceeding with purchase!")
+            modal_denom = int(m_denom_match.group(1)) if m_denom_match else None
+
+            # STRICT DOUBLE-LOCK GUARD: Never buy wrong denomination!
+            if denomination > 0 and modal_denom is not None and modal_denom != denomination:
+                logger.error(f"[Rooter] STRICT DOUBLE-LOCK: Modal has Rs.{modal_denom} Wallet Code but target was Rs.{denomination}! Aborting purchase.")
+                try:
+                    close_btn = page.locator(".mantine-Modal-close, button[aria-label*='Close'], svg[class*='close']").first
+                    if await close_btn.is_visible(timeout=1000):
+                        await close_btn.click(force=True)
+                except Exception:
+                    pass
+                return PurchaseResult(
+                    success=False,
+                    platform="rooter",
+                    denomination=denomination,
+                    quantity=quantity,
+                    account_label=account_label,
+                    message=f"ABORTED: Checkout modal showed PlayStation ₹{modal_denom:,} instead of requested ₹{denomination:,}! Strict lock prevented accidental wrong purchase.",
+                )
+
+            if modal_denom:
+                logger.info(f"[Rooter] Checkout modal item confirmed: Rs.{modal_denom} Wallet Code. Proceeding with purchase!")
             else:
                 logger.info("[Rooter] Proceeding with checkout in modal...")
-
-            modal_pay_btn = page.locator(".mantine-Modal-content button:has-text('Pay via wallet'), div[role='dialog'] button:has-text('Pay via wallet'), button:has-text('Pay via wallet')").last
             if await modal_pay_btn.is_visible(timeout=5000):
                 if progress_callback:
                     await progress_callback("Confirming Delivery Details & submitting order...", "📝")
