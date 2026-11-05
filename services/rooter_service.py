@@ -684,6 +684,16 @@ class RooterService(BasePlatform):
                 logger.info(f"[Rooter] Checkout modal item confirmed: Rs.{modal_denom} Wallet Code. Proceeding with purchase!")
             else:
                 logger.info("[Rooter] Proceeding with checkout in modal...")
+
+            modal_pay_btn = page.locator(
+                ".mantine-Modal-content button:has-text('Pay via wallet'), "
+                "div[role='dialog'] button:has-text('Pay via wallet'), "
+                "button:has-text('Pay via wallet'), "
+                ".mantine-Modal-content button:has-text('Proceed to Pay'), "
+                ".mantine-Modal-content button:has-text('Pay'), "
+                "div[role='dialog'] button:has-text('Pay'), "
+                ".mantine-Modal-content button[type='submit']"
+            ).last
             if await modal_pay_btn.is_visible(timeout=5000):
                 if progress_callback:
                     await progress_callback("Confirming Delivery Details & submitting order...", "📝")
